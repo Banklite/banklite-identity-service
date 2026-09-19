@@ -1,7 +1,8 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, String, Uuid
+from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Index, Numeric, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -11,36 +12,113 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class User(Base):
-    """Tabla users del Identity DB: (id, email, phone, country, status)."""
+class Usuario(Base):
+    """Tabla usuario — entidad raiz del microservicio de Identidad y KYC.
 
-    __tablename__ = "users"
+    Coincide con el modelo entidad-relacion oficial del proyecto (documento
+    Actividad_Momento_1, seccion "Diseno del modelo de datos relacional"):
+    USUARIO(id_usuario, nombre, apellido, email, telefono, pais_residencia,
+    fecha_registro, estado).
+    """
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
-    phone: Mapped[str] = mapped_column(String(32), nullable=False)
-    country: Mapped[str] = mapped_column(String(2), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending_verification")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    __tablename__ = "usuario"
+    __table_args__ = (Index("idx_usuario_email", "email"),)
 
-    kyc_records: Mapped[list["KycRecord"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan", order_by="KycRecord.created_at"
+    id_usuario: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    nombre: Mapped[str] = mapped_column(String(120), nullable=False)
+    apellido: Mapped[str] = mapped_column(String(120), nullable=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    telefono: Mapped[str] = mapped_column(String(32), nullable=True)
+    pais_residencia: Mapped[str] = mapped_column(String(2), nullable=False)
+    fecha_registro: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    estado: Mapped[str] = mapped_column(String(32), nullable=False, default="pendiente_verificacion")
+
+    documentos: Mapped[list["DocumentoIdentidad"]] = relationship(
+        back_populates="usuario", cascade="all, delete-orphan"
+    )
+    verificaciones: Mapped[list["VerificacionKyc"]] = relationship(
+        back_populates="usuario",
+        cascade="all, delete-orphan",
+        order_by="VerificacionKyc.fecha_verificacion",
     )
 
 
-class KycRecord(Base):
-    """Tabla kyc_records. El numero de documento nunca se guarda en claro:
-    se almacena su hash SHA-256 y solo los ultimos 4 digitos visibles."""
+class DocumentoIdentidad(Base):
+    """Tabla documento_identidad.
 
-    __tablename__ = "kyc_records"
+    DOCUMENTO_IDENTIDAD(id_documento, id_usuario FK, tipo_documento,
+    numero_documento, pais_emision, fecha_expiracion). Relacion: un usuario
+    puede tener varios documentos (Usuario 1:N Documento_Identidad).
+    """
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    document_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    document_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    document_last4: Mapped[str] = mapped_column(String(4), nullable=False)
-    verification_status: Mapped[str] = mapped_column(String(32), nullable=False)
-    provider_reference: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    __tablename__ = "documento_identidad"
+    __table_args__ = (
+        CheckConstraint(
+            "tipo_documento IN ('cedula','pasaporte','licencia')", name="ck_documento_tipo"
+        ),
+        Index("idx_documento_usuario", "id_usuario"),
+    )
 
-    user: Mapped["User"] = relationship(back_populates="kyc_records")
+    id_documento: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    id_usuario: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("usuario.id_usuario", ondelete="CASCADE"), nullable=False
+    )
+    tipo_documento: Mapped[str] = mapped_column(String(32), nullable=False)
+    numero_documento: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    pais_emision: Mapped[str] = mapped_column(String(2), nullable=True)
+    fecha_expiracion: Mapped[date] = mapped_column(Date, nullable=False)
+
+    usuario: Mapped["Usuario"] = relationship(back_populates="documentos")
+
+
+class VerificacionKyc(Base):
+    """Tabla verificacion_kyc.
+
+    VERIFICACION_KYC(id_verificacion, id_usuario FK, proveedor_externo,
+    resultado, fecha_verificacion). Relacion: Usuario 1:N Verificacion_KYC.
+    """
+
+    __tablename__ = "verificacion_kyc"
+    __table_args__ = (
+        CheckConstraint(
+            "resultado IN ('pendiente','aprobado','rechazado')", name="ck_verificacion_resultado"
+        ),
+        Index("idx_verificacion_usuario", "id_usuario"),
+    )
+
+    id_verificacion: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    id_usuario: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("usuario.id_usuario", ondelete="CASCADE"), nullable=False
+    )
+    proveedor_externo: Mapped[str] = mapped_column(String(64), nullable=False)
+    resultado: Mapped[str] = mapped_column(String(32), nullable=False)
+    fecha_verificacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    usuario: Mapped["Usuario"] = relationship(back_populates="verificaciones")
+    evaluaciones: Mapped[list["EvaluacionRiesgo"]] = relationship(
+        back_populates="verificacion", cascade="all, delete-orphan"
+    )
+
+
+class EvaluacionRiesgo(Base):
+    """Tabla evaluacion_riesgo.
+
+    EVALUACION_RIESGO(id_evaluacion, id_verificacion FK, nivel_riesgo, score,
+    fecha_evaluacion). Relacion: Verificacion_KYC 1:N Evaluacion_Riesgo.
+    """
+
+    __tablename__ = "evaluacion_riesgo"
+    __table_args__ = (
+        CheckConstraint("nivel_riesgo IN ('bajo','medio','alto')", name="ck_evaluacion_nivel"),
+        Index("idx_evaluacion_verificacion", "id_verificacion"),
+    )
+
+    id_evaluacion: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    id_verificacion: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("verificacion_kyc.id_verificacion", ondelete="CASCADE"), nullable=False
+    )
+    nivel_riesgo: Mapped[str] = mapped_column(String(16), nullable=False)
+    score: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    fecha_evaluacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    verificacion: Mapped["VerificacionKyc"] = relationship(back_populates="evaluaciones")

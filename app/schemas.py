@@ -1,69 +1,89 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
-
-class UserCreate(BaseModel):
+class UsuarioCreate(BaseModel):
+    nombre: str = Field(min_length=1, max_length=120)
+    apellido: str | None = Field(default=None, max_length=120)
     email: EmailStr
-    phone: str = Field(min_length=7, max_length=32, examples=["+573001234567"])
-    country: str = Field(min_length=2, max_length=2, examples=["CO"])
+    telefono: str = Field(min_length=7, max_length=32, examples=["+573001234567"])
+    pais_residencia: str = Field(min_length=2, max_length=2, examples=["CO"])
 
-    @field_validator("country")
+    @field_validator("pais_residencia")
     @classmethod
-    def country_upper(cls, v: str) -> str:
+    def pais_upper(cls, v: str) -> str:
         if not v.isalpha():
-            raise ValueError("country debe ser un codigo ISO de 2 letras, por ejemplo CO")
+            raise ValueError("pais_residencia debe ser un codigo ISO de 2 letras, por ejemplo CO")
         return v.upper()
 
-    @field_validator("phone")
+    @field_validator("telefono")
     @classmethod
-    def phone_digits(cls, v: str) -> str:
+    def telefono_digitos(cls, v: str) -> str:
         cleaned = v.replace(" ", "")
         if not cleaned.lstrip("+").isdigit():
-            raise ValueError("phone solo admite digitos y un + inicial")
+            raise ValueError("telefono solo admite digitos y un + inicial")
         return cleaned
 
 
-class UserOut(BaseModel):
+class UsuarioOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: uuid.UUID
+    id_usuario: uuid.UUID
+    nombre: str
+    apellido: str | None
     email: EmailStr
-    phone: str
-    country: str
-    status: str
-    created_at: datetime
+    telefono: str
+    pais_residencia: str
+    estado: str
+    fecha_registro: datetime
 
 
-class KycRequest(BaseModel):
-    document_type: Literal["cedula", "pasaporte", "licencia"]
-    document_number: str = Field(min_length=5, max_length=32)
+class KycVerifyRequest(BaseModel):
+    id_usuario: uuid.UUID
+    tipo_documento: Literal["cedula", "pasaporte", "licencia"]
+    numero_documento: str = Field(min_length=5, max_length=32)
+    pais_emision: str = Field(min_length=2, max_length=2, examples=["CO"])
+    fecha_expiracion: date
 
-    @field_validator("document_number")
+    @field_validator("numero_documento")
     @classmethod
     def doc_alnum(cls, v: str) -> str:
         if not v.isalnum():
-            raise ValueError("document_number debe ser alfanumerico")
+            raise ValueError("numero_documento debe ser alfanumerico")
         return v
 
+    @field_validator("pais_emision")
+    @classmethod
+    def pais_emision_upper(cls, v: str) -> str:
+        return v.upper()
 
-class KycOut(BaseModel):
+
+class EvaluacionRiesgoOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: uuid.UUID
-    user_id: uuid.UUID
-    document_type: str
-    document_last4: str
-    verification_status: str
-    provider_reference: str
-    created_at: datetime
+    id_evaluacion: uuid.UUID
+    nivel_riesgo: str
+    score: Decimal
+    fecha_evaluacion: datetime
 
 
-class KycResult(BaseModel):
-    kyc: KycOut
-    user_status: str
+class VerificacionKycOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id_verificacion: uuid.UUID
+    id_usuario: uuid.UUID
+    proveedor_externo: str
+    resultado: str
+    fecha_verificacion: datetime
+    evaluaciones: list[EvaluacionRiesgoOut] = []
+
+
+class KycVerifyResult(BaseModel):
+    verificacion: VerificacionKycOut
+    estado_usuario: str
     event_published: bool
     event_name: str | None = None

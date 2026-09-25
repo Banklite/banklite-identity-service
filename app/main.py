@@ -19,6 +19,8 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS fecha_nacimiento VARCHAR(20);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS servicio_solicitado VARCHAR(100);"))
     logger.info("%s iniciado", settings.service_name)
     yield
 

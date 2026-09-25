@@ -35,6 +35,8 @@ def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
         pais_residencia=payload.pais_residencia,
         estado="pendiente_verificacion",
         password_hash=hash_password(payload.password),
+        fecha_nacimiento=payload.fecha_nacimiento,
+        servicio_solicitado=payload.servicio_solicitado,
     )
     db.add(usuario)
     try:

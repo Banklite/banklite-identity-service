@@ -13,6 +13,8 @@ class UsuarioCreate(BaseModel):
     telefono: str = Field(min_length=7, max_length=32, examples=["+573001234567"])
     pais_residencia: str = Field(min_length=2, max_length=2, examples=["CO"])
     password: str = Field(min_length=6, max_length=72, description="Contraseña para iniciar sesión en el panel.")
+    fecha_nacimiento: str | None = Field(default=None, description="Fecha de nacimiento en formato YYYY-MM-DD")
+    servicio_solicitado: str | None = Field(default=None, description="Servicio bancario inicial solicitado")
 
     @field_validator("pais_residencia")
     @classmethod
@@ -41,6 +43,8 @@ class UsuarioOut(BaseModel):
     pais_residencia: str
     estado: str
     fecha_registro: datetime
+    fecha_nacimiento: str | None = None
+    servicio_solicitado: str | None = None
 
 
 class KycVerifyRequest(BaseModel):

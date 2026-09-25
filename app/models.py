@@ -37,6 +37,8 @@ class Usuario(Base):
     # cambio no tienen contrasena; no pueden iniciar sesion hasta que se les
     # asigne una.
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    fecha_nacimiento: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    servicio_solicitado: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     documentos: Mapped[list["DocumentoIdentidad"]] = relationship(
         back_populates="usuario", cascade="all, delete-orphan"

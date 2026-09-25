@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 
 from .config import settings
 from .database import Base, engine
-from .routers import kyc, users
+from .routers import auth, kyc, users
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(settings.service_name)
@@ -39,6 +39,7 @@ app.add_middleware(
 
 app.include_router(users.router)
 app.include_router(kyc.router)
+app.include_router(auth.router)
 
 
 @app.get("/health", tags=["infra"])

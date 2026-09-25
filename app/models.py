@@ -32,6 +32,11 @@ class Usuario(Base):
     pais_residencia: Mapped[str] = mapped_column(String(2), nullable=False)
     fecha_registro: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     estado: Mapped[str] = mapped_column(String(32), nullable=False, default="pendiente_verificacion")
+    # Agregado a pedido del profesor para permitir login real (no estaba en
+    # el documento oficial). Nullable porque usuarios creados antes de este
+    # cambio no tienen contrasena; no pueden iniciar sesion hasta que se les
+    # asigne una.
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     documentos: Mapped[list["DocumentoIdentidad"]] = relationship(
         back_populates="usuario", cascade="all, delete-orphan"

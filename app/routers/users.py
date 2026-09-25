@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Usuario
 from ..schemas import UsuarioCreate, UsuarioOut
+from ..security import hash_password
 
 router = APIRouter(prefix="/users", tags=["usuarios"])
 
@@ -33,6 +34,7 @@ def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
         telefono=payload.telefono,
         pais_residencia=payload.pais_residencia,
         estado="pendiente_verificacion",
+        password_hash=hash_password(payload.password),
     )
     db.add(usuario)
     try:

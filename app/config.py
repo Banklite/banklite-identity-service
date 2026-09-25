@@ -17,5 +17,12 @@ class Settings(BaseSettings):
     events_exchange: str = "banklite.events"
     enable_events: bool = True
 
+    # Autenticacion — agregado a pedido del profesor (no estaba en el
+    # documento oficial). En produccion real, jwt_secret debe sobreescribirse
+    # por variable de entorno; el valor por defecto es solo para desarrollo.
+    jwt_secret: str = "banklite-dev-secret-cambiar-en-produccion"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 480
+
 
 settings = Settings()

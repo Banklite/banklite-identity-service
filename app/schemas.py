@@ -12,6 +12,7 @@ class UsuarioCreate(BaseModel):
     email: EmailStr
     telefono: str = Field(min_length=7, max_length=32, examples=["+573001234567"])
     pais_residencia: str = Field(min_length=2, max_length=2, examples=["CO"])
+    password: str = Field(min_length=6, max_length=72, description="Contraseña para iniciar sesión en el panel.")
 
     @field_validator("pais_residencia")
     @classmethod
@@ -87,3 +88,14 @@ class KycVerifyResult(BaseModel):
     estado_usuario: str
     event_published: bool
     event_name: str | None = None
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=72)
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    usuario: UsuarioOut

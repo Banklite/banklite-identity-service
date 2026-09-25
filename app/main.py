@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from sqlalchemy import text
 from .config import settings
 from .database import Base, engine
 from .routers import auth, kyc, users
@@ -16,6 +17,8 @@ logger = logging.getLogger(settings.service_name)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);"))
     logger.info("%s iniciado", settings.service_name)
     yield
 

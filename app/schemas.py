@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
@@ -12,9 +12,13 @@ class UsuarioCreate(BaseModel):
     email: EmailStr
     telefono: str = Field(min_length=7, max_length=32, examples=["+573001234567"])
     pais_residencia: str = Field(min_length=2, max_length=2, examples=["CO"])
-    password: str = Field(min_length=6, max_length=72, description="Contraseña para iniciar sesión en el panel.")
+    password: str = Field(min_length=6, max_length=72, description="ContraseÃ±a para iniciar sesiÃ³n en el panel.")
     fecha_nacimiento: str | None = Field(default=None, description="Fecha de nacimiento en formato YYYY-MM-DD")
     servicio_solicitado: str | None = Field(default=None, description="Servicio bancario inicial solicitado")
+    cedula: str | None = Field(default=None, description="Cedula de ciudadania o documento")
+    fecha_expedicion: str | None = Field(default=None, description="Fecha de expediciÃ³n")
+    fecha_vencimiento: str | None = Field(default=None, description="Fecha de vencimiento")
+    pais_expedicion: str | None = Field(default=None, description="PaÃ­s de expediciÃ³n")
 
     @field_validator("pais_residencia")
     @classmethod
@@ -45,6 +49,12 @@ class UsuarioOut(BaseModel):
     fecha_registro: datetime
     fecha_nacimiento: str | None = None
     servicio_solicitado: str | None = None
+    cedula: str | None = None
+    role: str = "cliente"
+    fecha_expedicion: str | None = None
+    fecha_vencimiento: str | None = None
+    pais_expedicion: str | None = None
+    estado_kyc: str | None = None
 
 
 class KycVerifyRequest(BaseModel):
@@ -103,3 +113,10 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     usuario: UsuarioOut
+
+class UsuarioUpdate(BaseModel):
+    cedula: str | None = None
+    fecha_nacimiento: str | None = None
+    fecha_expedicion: str | None = None
+    fecha_vencimiento: str | None = None
+    pais_expedicion: str | None = None

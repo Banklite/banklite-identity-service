@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -26,7 +26,15 @@ def get_usuario_or_404(db: Session, id_usuario: uuid.UUID) -> Usuario:
 @router.post("", response_model=UsuarioOut, status_code=status.HTTP_201_CREATED)
 def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
     """Registra un usuario en la tabla usuario. Queda pendiente_verificacion
-    hasta que pase el KYC en POST /kyc/verify."""
+    hasta que pase el KYC en POST /kyc/verify.
+    
+    El PRIMER usuario registrado en el sistema recibe role='admin'.
+    Todos los demás quedan como role='cliente'.
+    """
+    # Determinar el rol: el primer usuario es admin
+    total_usuarios = db.execute(select(Usuario)).scalars().first()
+    role = "admin" if total_usuarios is None else "cliente"
+
     usuario = Usuario(
         nombre=payload.nombre,
         apellido=payload.apellido,
@@ -37,6 +45,12 @@ def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
         password_hash=hash_password(payload.password),
         fecha_nacimiento=payload.fecha_nacimiento,
         servicio_solicitado=payload.servicio_solicitado,
+        cedula=payload.cedula,
+        fecha_expedicion=payload.fecha_expedicion,
+        fecha_vencimiento=payload.fecha_vencimiento,
+        pais_expedicion=payload.pais_expedicion,
+        estado_kyc="PENDIENTE",
+        role=role,
     )
     db.add(usuario)
     try:
@@ -68,3 +82,18 @@ def listar_usuarios(
 def consultar_usuario(id_usuario: uuid.UUID, db: Session = Depends(get_db)):
     """Endpoint consumido de forma SINCRONA por account-service antes de abrir una cuenta."""
     return get_usuario_or_404(db, id_usuario)
+
+from ..schemas import UsuarioUpdate
+@router.patch("/{id_usuario}", response_model=UsuarioOut)
+def actualizar_usuario(id_usuario: uuid.UUID, payload: UsuarioUpdate, db: Session = Depends(get_db)):
+    usuario = get_usuario_or_404(db, id_usuario)
+    if payload.cedula: usuario.cedula = payload.cedula
+    if payload.fecha_nacimiento: usuario.fecha_nacimiento = payload.fecha_nacimiento
+    if payload.fecha_expedicion: usuario.fecha_expedicion = payload.fecha_expedicion
+    if payload.fecha_vencimiento: usuario.fecha_vencimiento = payload.fecha_vencimiento
+    if payload.pais_expedicion: usuario.pais_expedicion = payload.pais_expedicion
+    usuario.estado_kyc = "EN_REVISION"
+    db.commit()
+    db.refresh(usuario)
+    return usuario
+

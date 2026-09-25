@@ -20,7 +20,21 @@ async def lifespan(app: FastAPI):
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);"))
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS fecha_nacimiento VARCHAR(20);"))
-        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS servicio_solicitado VARCHAR(100);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS role VARCHAR(20);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS cedula VARCHAR(50);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS fecha_expedicion VARCHAR(20);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS fecha_vencimiento VARCHAR(20);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS pais_expedicion VARCHAR(10);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS estado_kyc VARCHAR(20);"))
+        
+        # Migrar usuarios existentes
+        conn.execute(text("UPDATE usuario SET estado_kyc = 'PENDIENTE' WHERE estado_kyc IS NULL;"))
+        conn.execute(text("UPDATE usuario SET role = 'cliente' WHERE role IS NULL;"))
+        conn.execute(text(
+            "UPDATE usuario SET role = 'admin' WHERE id_usuario = "
+            "(SELECT id_usuario FROM usuario ORDER BY fecha_registro ASC LIMIT 1) "
+            "AND role = 'cliente';"
+        ))
     logger.info("%s iniciado", settings.service_name)
     yield
 

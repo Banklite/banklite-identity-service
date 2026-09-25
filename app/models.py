@@ -39,6 +39,9 @@ class Usuario(Base):
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     fecha_nacimiento: Mapped[str | None] = mapped_column(String(20), nullable=True)
     servicio_solicitado: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    cedula: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Rol del usuario: 'admin' o 'cliente'. El primer usuario registrado es admin.
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="cliente")
 
     documentos: Mapped[list["DocumentoIdentidad"]] = relationship(
         back_populates="usuario", cascade="all, delete-orphan"

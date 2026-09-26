@@ -20,6 +20,7 @@ async def lifespan(app: FastAPI):
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);"))
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS fecha_nacimiento VARCHAR(20);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS servicio_solicitado VARCHAR(100);"))
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS role VARCHAR(20);"))
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS cedula VARCHAR(50);"))
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS fecha_expedicion VARCHAR(20);"))

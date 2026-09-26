@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -78,6 +78,7 @@ def verificar_kyc(payload: KycVerifyRequest, db: Session = Depends(get_db)):
     )
 
     usuario.estado = "verificado" if resultado == "aprobado" else "rechazado"
+    usuario.estado_kyc = "VERIFICADO" if resultado == "aprobado" else "RECHAZADO"
 
     db.commit()
     db.refresh(verificacion)

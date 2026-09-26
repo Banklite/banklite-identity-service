@@ -30,5 +30,5 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if not verify_password(payload.password, usuario.password_hash):
         raise credenciales_invalidas
 
-    token = create_access_token(usuario.id_usuario, usuario.email)
+    token = create_access_token(usuario.id_usuario, usuario.email, usuario.role)
     return LoginResponse(access_token=token, usuario=usuario)

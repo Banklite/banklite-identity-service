@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from .config import settings
 from .database import Base, engine
@@ -13,9 +14,22 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger(settings.service_name)
 
 
+def _migrar_password_hash() -> None:
+    """Agrega la columna password_hash si la tabla usuario ya existia sin ella.
+
+    Base.metadata.create_all() solo crea tablas nuevas: no altera tablas que
+    ya existen en la base de datos (como la de produccion en Render, creada
+    antes de agregar el login real). Este ALTER es idempotente y seguro de
+    correr en cada arranque.
+    """
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    _migrar_password_hash()
     logger.info("%s iniciado", settings.service_name)
     yield
 

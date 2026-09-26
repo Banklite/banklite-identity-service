@@ -40,6 +40,10 @@ class Usuario(Base):
     fecha_nacimiento: Mapped[str | None] = mapped_column(String(20), nullable=True)
     servicio_solicitado: Mapped[str | None] = mapped_column(String(100), nullable=True)
     cedula: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    fecha_expedicion: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    fecha_vencimiento: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    pais_expedicion: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    estado_kyc: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Rol del usuario: 'admin' o 'cliente'. El primer usuario registrado es admin.
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="cliente")
 

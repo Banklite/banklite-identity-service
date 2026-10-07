@@ -29,6 +29,16 @@ class UsuarioCreate(BaseModel):
             raise ValueError("pais_residencia debe ser un codigo ISO de 2 letras, por ejemplo CO")
         return v.upper()
 
+    @field_validator("cedula", "representante_documento")
+    @classmethod
+    def documento_digitos(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        v = v.strip()
+        if not v.isdigit() or not (6 <= len(v) <= 10):
+            raise ValueError("el documento debe tener solo numeros, entre 6 y 10 digitos")
+        return v
+
     @field_validator("telefono")
     @classmethod
     def telefono_digitos(cls, v: str) -> str:

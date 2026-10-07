@@ -1,7 +1,10 @@
 """Proveedor KYC externo + motor de evaluacion de riesgo.
 
 Integra la API real de Truora para validacion de antecedentes judiciales y de identidad.
-Si no se provee la variable de entorno TRUORA_API_KEY, opera en modo SIMULADO local.
+Si no se provee la variable de entorno TRUORA_API_KEY, opera en modo SIMULADO local
+(demostracion: NO consulta bases reales). Si la clave existe pero la llamada a Truora
+falla, NO se aprueba por simulacion: se propaga el error y el usuario queda en
+ERROR_VERIFICACION.
 """
 
 import os
@@ -65,16 +68,17 @@ def verify_identity(tipo_documento: str, numero_documento: str) -> tuple[str, st
                         elif status == "error":
                             break
                             
-                # Si despues de los intentos no termino, rechazamos por precaucion o timeout
-                return "rechazado", f"TRUORA-TIMEOUT-{check_id}"
+                # Truora no termino a tiempo: no decidimos nada, el usuario queda por reintentar
+                raise RuntimeError(f"Truora no completo la verificacion a tiempo (check {check_id})")
+            raise RuntimeError("Truora no devolvio check_id")
 
         except Exception as e:
             print(f"Error llamando a Truora: {e}")
-            pass # Si falla, usamos el modo simulado
+            raise  # sin clave valida no se aprueba a nadie por simulacion
 
     # ── SIMULACION LOCAL (Cuando no hay API Key o hay error de red) ──
     # Para poder probar el sistema localmente sin gastar saldo real, mantenemos reglas de prueba:
-    referencia = f"SIM-TRUORA-{hashlib.sha1(numero_documento.encode('utf-8')).hexdigest()[:8].upper()}"
+    referencia = f"SIMULADO-{hashlib.sha1(numero_documento.encode('utf-8')).hexdigest()[:8].upper()}"
     
     # Regla 1: Terminacion 0000 = Documento invalido / fraude de identidad
     if numero_documento.endswith("0000"):

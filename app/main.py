@@ -25,6 +25,8 @@ async def lifespan(app: FastAPI):
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS fecha_vencimiento VARCHAR(20);"))
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS pais_expedicion VARCHAR(10);"))
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS estado_kyc VARCHAR(20);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS representante_nombre VARCHAR(120);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS representante_documento VARCHAR(50);"))
         
         # Migrar usuarios existentes
         conn.execute(text("UPDATE usuario SET estado_kyc = 'PENDIENTE' WHERE estado_kyc IS NULL;"))

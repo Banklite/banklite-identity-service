@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -35,6 +35,24 @@ def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
     total_usuarios = db.execute(select(Usuario)).scalars().first()
     role = "admin" if total_usuarios is None else "cliente"
 
+    from datetime import datetime
+    
+    estado_kyc = "PENDIENTE"
+    if payload.fecha_nacimiento:
+        try:
+            fn = datetime.strptime(payload.fecha_nacimiento, "%Y-%m-%d").date()
+            today = datetime.now().date()
+            edad = today.year - fn.year - ((today.month, today.day) < (fn.month, fn.day))
+            if edad < 18:
+                if not payload.representante_nombre or not payload.representante_documento:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Para menores de 18 años es obligatorio proveer datos del representante (nombre y documento)"
+                    )
+                estado_kyc = "MENOR_CON_REPRESENTANTE"
+        except ValueError:
+            pass
+
     usuario = Usuario(
         nombre=payload.nombre,
         apellido=payload.apellido,
@@ -49,7 +67,9 @@ def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
         fecha_expedicion=payload.fecha_expedicion,
         fecha_vencimiento=payload.fecha_vencimiento,
         pais_expedicion=payload.pais_expedicion,
-        estado_kyc="PENDIENTE",
+        representante_nombre=payload.representante_nombre,
+        representante_documento=payload.representante_documento,
+        estado_kyc=estado_kyc,
         role=role,
     )
     db.add(usuario)
@@ -65,12 +85,15 @@ def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
     return usuario
 
 
+from ..security import hash_password, require_admin
+
 @router.get("", response_model=list[UsuarioOut])
 def listar_usuarios(
     db: Session = Depends(get_db),
     estado: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    admin_user: dict = Depends(require_admin),
 ):
     stmt = select(Usuario).order_by(Usuario.fecha_registro.desc()).limit(limit).offset(offset)
     if estado:

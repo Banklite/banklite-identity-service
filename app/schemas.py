@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
@@ -19,6 +19,8 @@ class UsuarioCreate(BaseModel):
     fecha_expedicion: str | None = Field(default=None, description="Fecha de expediciÃ³n")
     fecha_vencimiento: str | None = Field(default=None, description="Fecha de vencimiento")
     pais_expedicion: str | None = Field(default=None, description="PaÃ­s de expediciÃ³n")
+    representante_nombre: str | None = Field(default=None, description="Nombre del representante legal (para menores)")
+    representante_documento: str | None = Field(default=None, description="Documento del representante legal")
 
     @field_validator("pais_residencia")
     @classmethod
@@ -55,6 +57,8 @@ class UsuarioOut(BaseModel):
     fecha_vencimiento: str | None = None
     pais_expedicion: str | None = None
     estado_kyc: str | None = None
+    representante_nombre: str | None = None
+    representante_documento: str | None = None
 
 
 class KycVerifyRequest(BaseModel):

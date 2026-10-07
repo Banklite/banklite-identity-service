@@ -34,6 +34,20 @@ def _migrar_usuario() -> None:
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS estado_kyc VARCHAR(20);"))
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS representante_nombre VARCHAR(120);"))
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS representante_documento VARCHAR(50);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS tipo_documento VARCHAR(30);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS representante_tipo_documento VARCHAR(30);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS representante_parentesco VARCHAR(30);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS representante_telefono VARCHAR(32);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS representante_email VARCHAR(120);"))
+        # 'MENOR_CON_REPRESENTANTE' (23 chars) no cabia en VARCHAR(20) y provocaba un 500 al registrar menores
+        conn.execute(text("ALTER TABLE usuario ALTER COLUMN estado_kyc TYPE VARCHAR(40);"))
+        conn.execute(text("UPDATE usuario SET tipo_documento = 'cedula' WHERE tipo_documento IS NULL;"))
+        # ampliar los tipos de documento permitidos
+        conn.execute(text("ALTER TABLE documento_identidad DROP CONSTRAINT IF EXISTS ck_documento_tipo;"))
+        conn.execute(text(
+            "ALTER TABLE documento_identidad ADD CONSTRAINT ck_documento_tipo CHECK "
+            "(tipo_documento IN ('cedula','tarjeta_identidad','cedula_extranjeria','pasaporte','licencia'));"
+        ))
         # Migrar usuarios existentes
         conn.execute(text("UPDATE usuario SET estado_kyc = 'PENDIENTE' WHERE estado_kyc IS NULL;"))
         conn.execute(text("UPDATE usuario SET role = 'cliente' WHERE role IS NULL;"))

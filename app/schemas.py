@@ -3,7 +3,24 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+
+
+TIPOS_DOCUMENTO = ("cedula", "tarjeta_identidad", "cedula_extranjeria", "pasaporte")
+
+
+def _validar_numero_documento(v: str | None, tipo: str) -> str | None:
+    """Cedula / TI / CE: solo digitos (6-10). Pasaporte: letras y numeros (6-12)."""
+    if v is None or v.strip() == "":
+        return None
+    v = v.strip()
+    if tipo == "pasaporte":
+        if not v.isalnum() or not (6 <= len(v) <= 12):
+            raise ValueError("el pasaporte debe tener entre 6 y 12 letras o numeros")
+        return v.upper()
+    if not v.isdigit() or not (6 <= len(v) <= 10):
+        raise ValueError("el documento debe tener solo numeros, entre 6 y 10 digitos")
+    return v
 
 
 class UsuarioCreate(BaseModel):
@@ -19,8 +36,13 @@ class UsuarioCreate(BaseModel):
     fecha_expedicion: str | None = Field(default=None, description="Fecha de expediciÃ³n")
     fecha_vencimiento: str | None = Field(default=None, description="Fecha de vencimiento")
     pais_expedicion: str | None = Field(default=None, description="PaÃ­s de expediciÃ³n")
+    tipo_documento: str = Field(default="cedula", description="cedula, tarjeta_identidad, cedula_extranjeria o pasaporte")
     representante_nombre: str | None = Field(default=None, description="Nombre del representante legal (para menores)")
     representante_documento: str | None = Field(default=None, description="Documento del representante legal")
+    representante_tipo_documento: str | None = Field(default=None)
+    representante_parentesco: str | None = Field(default=None, description="padre, madre, tutor u otro")
+    representante_telefono: str | None = Field(default=None, max_length=32)
+    representante_email: str | None = Field(default=None, max_length=120)
 
     @field_validator("pais_residencia")
     @classmethod
@@ -29,15 +51,22 @@ class UsuarioCreate(BaseModel):
             raise ValueError("pais_residencia debe ser un codigo ISO de 2 letras, por ejemplo CO")
         return v.upper()
 
-    @field_validator("cedula", "representante_documento")
+    @field_validator("tipo_documento", "representante_tipo_documento")
     @classmethod
-    def documento_digitos(cls, v: str | None) -> str | None:
-        if v is None or v == "":
-            return None
-        v = v.strip()
-        if not v.isdigit() or not (6 <= len(v) <= 10):
-            raise ValueError("el documento debe tener solo numeros, entre 6 y 10 digitos")
+    def tipo_doc_valido(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if v not in TIPOS_DOCUMENTO:
+            raise ValueError(f"tipo de documento invalido; use uno de: {', '.join(TIPOS_DOCUMENTO)}")
         return v
+
+    @model_validator(mode="after")
+    def validar_documentos(self):
+        self.cedula = _validar_numero_documento(self.cedula, self.tipo_documento)
+        self.representante_documento = _validar_numero_documento(
+            self.representante_documento, self.representante_tipo_documento or "cedula"
+        )
+        return self
 
     @field_validator("telefono")
     @classmethod
@@ -69,11 +98,16 @@ class UsuarioOut(BaseModel):
     estado_kyc: str | None = None
     representante_nombre: str | None = None
     representante_documento: str | None = None
+    tipo_documento: str | None = None
+    representante_tipo_documento: str | None = None
+    representante_parentesco: str | None = None
+    representante_telefono: str | None = None
+    representante_email: str | None = None
 
 
 class KycVerifyRequest(BaseModel):
     id_usuario: uuid.UUID
-    tipo_documento: Literal["cedula", "pasaporte", "licencia"]
+    tipo_documento: Literal["cedula", "tarjeta_identidad", "cedula_extranjeria", "pasaporte", "licencia"]
     numero_documento: str = Field(min_length=5, max_length=32)
     pais_emision: str = Field(min_length=2, max_length=2, examples=["CO"])
     fecha_expiracion: date

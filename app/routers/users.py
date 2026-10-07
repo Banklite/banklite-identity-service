@@ -27,85 +27,17 @@ def get_usuario_or_404(db: Session, id_usuario: uuid.UUID) -> Usuario:
     return usuario
 
 
-@router.post("", response_model=UsuarioOut, status_code=status.HTTP_201_CREATED)
-def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
-    """Registra un usuario y ejecuta la verificación KYC automáticamente.
-
-    Flujo:
-    1) Crea el usuario con estado 'pendiente_verificacion'.
-    2) Si tiene cédula/documento, llama automáticamente a la API de verificación.
-    3) Actualiza el estado a 'verificado' o 'rechazado' según el resultado.
-
-    El PRIMER usuario registrado recibe role='admin'.
-    """
-    total_usuarios = db.execute(select(Usuario)).scalars().first()
-    role = "admin" if total_usuarios is None else "cliente"
-
+def _ejecutar_kyc(
+    db: Session,
+    usuario: Usuario,
+    *,
+    numero_doc: str,
+    tipo_doc: str,
+    pais_emision: str,
+    fecha_vencimiento: str | None,
+) -> Usuario:
+    """Ejecuta (o reintenta) la verificación KYC de un usuario y actualiza su estado."""
     from datetime import datetime
-
-    estado_kyc = "PENDIENTE"
-    if payload.fecha_nacimiento:
-        try:
-            fn = datetime.strptime(payload.fecha_nacimiento, "%Y-%m-%d").date()
-            today = datetime.now().date()
-            edad = today.year - fn.year - ((today.month, today.day) < (fn.month, fn.day))
-            if edad < 18:
-                if not payload.representante_nombre or not payload.representante_documento:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Para menores de 18 años es obligatorio proveer datos del representante (nombre y documento)",
-                    )
-                estado_kyc = "MENOR_CON_REPRESENTANTE"
-        except ValueError:
-            pass
-
-    usuario = Usuario(
-        nombre=payload.nombre,
-        apellido=payload.apellido,
-        email=payload.email.lower(),
-        telefono=payload.telefono,
-        pais_residencia=payload.pais_residencia,
-        estado="pendiente_verificacion",
-        password_hash=hash_password(payload.password),
-        fecha_nacimiento=payload.fecha_nacimiento,
-        servicio_solicitado=payload.servicio_solicitado,
-        cedula=payload.cedula,
-        fecha_expedicion=payload.fecha_expedicion,
-        fecha_vencimiento=payload.fecha_vencimiento,
-        pais_expedicion=payload.pais_expedicion,
-        representante_nombre=payload.representante_nombre,
-        representante_documento=payload.representante_documento,
-        estado_kyc=estado_kyc,
-        role=role,
-    )
-    db.add(usuario)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"El email {payload.email} ya esta registrado",
-        )
-    db.refresh(usuario)
-
-    # ─── VERIFICACIÓN AUTOMÁTICA KYC ────────────────────────────────────────
-    # Solo si el usuario tiene cédula y el rol es 'cliente'.
-    # El admin no necesita pasar por KYC.
-    if role == "admin":
-        usuario.estado = "verificado"
-        usuario.estado_kyc = "VERIFICADO"
-        db.commit()
-        db.refresh(usuario)
-        return usuario
-
-    numero_doc = payload.cedula or ""
-    tipo_doc = "cedula"
-    pais_emision = payload.pais_residencia or "CO"
-
-    if not numero_doc:
-        # Sin documento → queda en pendiente, deberá completar datos luego
-        return usuario
 
     try:
         usuario.estado_kyc = "VERIFICANDO"
@@ -124,9 +56,9 @@ def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
         if documento is None:
             from datetime import date, timedelta
             fecha_exp = date.today() + timedelta(days=365 * 5)
-            if payload.fecha_vencimiento:
+            if fecha_vencimiento:
                 try:
-                    fecha_exp = datetime.strptime(payload.fecha_vencimiento, "%Y-%m-%d").date()
+                    fecha_exp = datetime.strptime(fecha_vencimiento, "%Y-%m-%d").date()
                 except ValueError:
                     pass
             documento = DocumentoIdentidad(
@@ -194,6 +126,107 @@ def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
     return usuario
 
 
+@router.post("", response_model=UsuarioOut, status_code=status.HTTP_201_CREATED)
+def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
+    """Registra un usuario y ejecuta la verificación KYC automáticamente.
+
+    Flujo:
+    1) Crea el usuario con estado 'pendiente_verificacion'.
+    2) Si tiene cédula/documento, llama automáticamente a la API de verificación.
+    3) Actualiza el estado a 'verificado' o 'rechazado' según el resultado.
+
+    El PRIMER usuario registrado recibe role='admin'.
+    """
+    total_usuarios = db.execute(select(Usuario)).scalars().first()
+    role = "admin" if total_usuarios is None else "cliente"
+
+    from datetime import datetime
+
+    estado_kyc = "PENDIENTE"
+    if payload.fecha_nacimiento:
+        try:
+            fn = datetime.strptime(payload.fecha_nacimiento, "%Y-%m-%d").date()
+            today = datetime.now().date()
+            edad = today.year - fn.year - ((today.month, today.day) < (fn.month, fn.day))
+            if edad < 18:
+                if not (
+                    payload.representante_nombre
+                    and payload.representante_documento
+                    and payload.representante_parentesco
+                    and payload.representante_telefono
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            "Para menores de 18 años es obligatorio proveer los datos del representante "
+                            "(nombre, documento, parentesco y teléfono)"
+                        ),
+                    )
+                estado_kyc = "MENOR_CON_REPRESENTANTE"
+        except ValueError:
+            pass
+
+    usuario = Usuario(
+        nombre=payload.nombre,
+        apellido=payload.apellido,
+        email=payload.email.lower(),
+        telefono=payload.telefono,
+        pais_residencia=payload.pais_residencia,
+        estado="pendiente_verificacion",
+        password_hash=hash_password(payload.password),
+        fecha_nacimiento=payload.fecha_nacimiento,
+        servicio_solicitado=payload.servicio_solicitado,
+        cedula=payload.cedula,
+        fecha_expedicion=payload.fecha_expedicion,
+        fecha_vencimiento=payload.fecha_vencimiento,
+        pais_expedicion=payload.pais_expedicion,
+        representante_nombre=payload.representante_nombre,
+        representante_documento=payload.representante_documento,
+        representante_tipo_documento=payload.representante_tipo_documento,
+        representante_parentesco=payload.representante_parentesco,
+        representante_telefono=payload.representante_telefono,
+        representante_email=payload.representante_email,
+        tipo_documento=payload.tipo_documento,
+        estado_kyc=estado_kyc,
+        role=role,
+    )
+    db.add(usuario)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"El email {payload.email} ya esta registrado",
+        )
+    db.refresh(usuario)
+
+    # ─── VERIFICACIÓN AUTOMÁTICA KYC ────────────────────────────────────────
+    # Solo si el usuario tiene cédula y el rol es 'cliente'.
+    # El admin no necesita pasar por KYC.
+    if role == "admin":
+        usuario.estado = "verificado"
+        usuario.estado_kyc = "VERIFICADO"
+        db.commit()
+        db.refresh(usuario)
+        return usuario
+
+    numero_doc = payload.cedula or ""
+    if not numero_doc:
+        # Sin documento → queda en pendiente, deberá completar datos luego
+        return usuario
+
+    _ejecutar_kyc(
+        db,
+        usuario,
+        numero_doc=numero_doc,
+        tipo_doc=payload.tipo_documento or "cedula",
+        pais_emision=payload.pais_residencia or "CO",
+        fecha_vencimiento=payload.fecha_vencimiento,
+    )
+    return usuario
+
+
 from ..security import hash_password, require_admin
 
 
@@ -237,3 +270,28 @@ def actualizar_usuario(id_usuario: uuid.UUID, payload: UsuarioUpdate, db: Sessio
     db.commit()
     db.refresh(usuario)
     return usuario
+
+
+@router.post("/{id_usuario}/reverificar", response_model=UsuarioOut)
+def reverificar_usuario(
+    id_usuario: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin_user: dict = Depends(require_admin),
+):
+    """Reintenta la verificación KYC de un usuario que quedó pendiente o con error."""
+    usuario = get_usuario_or_404(db, id_usuario)
+    if usuario.estado == "verificado":
+        return usuario
+    if not usuario.cedula:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El usuario no tiene documento registrado; debe completar su perfil primero",
+        )
+    return _ejecutar_kyc(
+        db,
+        usuario,
+        numero_doc=usuario.cedula,
+        tipo_doc=usuario.tipo_documento or "cedula",
+        pais_emision=usuario.pais_residencia or "CO",
+        fecha_vencimiento=usuario.fecha_vencimiento,
+    )

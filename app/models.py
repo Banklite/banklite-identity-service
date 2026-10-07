@@ -43,9 +43,14 @@ class Usuario(Base):
     fecha_expedicion: Mapped[str | None] = mapped_column(String(20), nullable=True)
     fecha_vencimiento: Mapped[str | None] = mapped_column(String(20), nullable=True)
     pais_expedicion: Mapped[str | None] = mapped_column(String(10), nullable=True)
-    estado_kyc: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    estado_kyc: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    tipo_documento: Mapped[str | None] = mapped_column(String(30), nullable=True)
     representante_nombre: Mapped[str | None] = mapped_column(String(120), nullable=True)
     representante_documento: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    representante_tipo_documento: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    representante_parentesco: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    representante_telefono: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    representante_email: Mapped[str | None] = mapped_column(String(120), nullable=True)
     # Rol del usuario: 'admin' o 'cliente'. El primer usuario registrado es admin.
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="cliente")
 
@@ -70,7 +75,7 @@ class DocumentoIdentidad(Base):
     __tablename__ = "documento_identidad"
     __table_args__ = (
         CheckConstraint(
-            "tipo_documento IN ('cedula','pasaporte','licencia')", name="ck_documento_tipo"
+            "tipo_documento IN ('cedula','tarjeta_identidad','cedula_extranjeria','pasaporte','licencia')", name="ck_documento_tipo"
         ),
         Index("idx_documento_usuario", "id_usuario"),
     )

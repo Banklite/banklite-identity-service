@@ -162,6 +162,21 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     usuario: UsuarioOut
 
+class CambiarClave(BaseModel):
+    clave_actual: str
+    clave_nueva: str = Field(min_length=6)
+
+
+class SolicitarReset(BaseModel):
+    email: EmailStr
+
+
+class ResetClave(BaseModel):
+    email: EmailStr
+    codigo: str
+    nueva_clave: str = Field(min_length=6)
+
+
 class UsuarioUpdate(BaseModel):
     cedula: str | None = None
     fecha_nacimiento: str | None = None

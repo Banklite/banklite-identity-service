@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import DocumentoIdentidad, EvaluacionRiesgo, Usuario, VerificacionKyc
-from ..schemas import UsuarioCreate, UsuarioOut
-from ..security import hash_password
+from ..schemas import CambiarClave, UsuarioCreate, UsuarioOut
+from ..security import hash_password, verify_password
 from .. import kyc_provider
 from ..events import EVENT_IDENTITY_VERIFIED, publish_event
 
@@ -272,7 +272,20 @@ def actualizar_usuario(id_usuario: uuid.UUID, payload: UsuarioUpdate, db: Sessio
     return usuario
 
 
-@router.post("/{id_usuario}/reverificar", response_model=UsuarioOut)
+@router.put("/{id_usuario}/cambiar-clave")
+def cambiar_clave(id_usuario: uuid.UUID, payload: CambiarClave, db: Session = Depends(get_db)):
+    usuario = get_usuario_or_404(db, id_usuario)
+    if not usuario.password_hash or not verify_password(payload.clave_actual, usuario.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="La contraseña actual es incorrecta",
+        )
+    usuario.password_hash = hash_password(payload.clave_nueva)
+    db.commit()
+    return {"mensaje": "Contraseña actualizada exitosamente"}
+
+
+@router.post("/{id_usuario}/reverificar",response_model=UsuarioOut)
 def reverificar_usuario(
     id_usuario: uuid.UUID,
     db: Session = Depends(get_db),

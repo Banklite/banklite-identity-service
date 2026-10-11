@@ -53,6 +53,9 @@ class Usuario(Base):
     representante_email: Mapped[str | None] = mapped_column(String(120), nullable=True)
     # Rol del usuario: 'admin' o 'cliente'. El primer usuario registrado es admin.
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="cliente")
+    # Recuperación de contraseña
+    reset_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    reset_code_expires: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     documentos: Mapped[list["DocumentoIdentidad"]] = relationship(
         back_populates="usuario", cascade="all, delete-orphan"

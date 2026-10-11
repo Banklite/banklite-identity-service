@@ -4,8 +4,11 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Usuario
-from ..schemas import LoginRequest, LoginResponse
-from ..security import create_access_token, verify_password
+import secrets
+from datetime import datetime, timedelta
+
+from ..schemas import LoginRequest, LoginResponse, ResetClave, SolicitarReset
+from ..security import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/auth", tags=["autenticacion"])
 
@@ -32,3 +35,45 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
     token = create_access_token(usuario.id_usuario, usuario.email, usuario.role)
     return LoginResponse(access_token=token, usuario=usuario)
+
+
+@router.post("/solicitar-reset")
+def solicitar_reset(payload: SolicitarReset, db: Session = Depends(get_db)):
+    """Genera un código de 6 dígitos válido por 15 minutos.
+
+    Modo simulado (sin servicio de correo): el código se devuelve en
+    'codigo_debug'. Siempre responde 200 para no revelar si el correo existe.
+    """
+    mensaje = "Si el correo está registrado, recibirás un código de verificación."
+    usuario = db.execute(select(Usuario).where(Usuario.email == payload.email.lower())).scalar_one_or_none()
+    if usuario is None:
+        return {"mensaje": mensaje}
+
+    codigo = f"{secrets.randbelow(1_000_000):06d}"
+    usuario.reset_code = codigo
+    usuario.reset_code_expires = datetime.utcnow() + timedelta(minutes=15)
+    db.commit()
+    return {"mensaje": mensaje, "codigo_debug": codigo}
+
+
+@router.post("/reset-clave")
+def reset_clave(payload: ResetClave, db: Session = Depends(get_db)):
+    usuario = db.execute(select(Usuario).where(Usuario.email == payload.email.lower())).scalar_one_or_none()
+    invalido = HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Código inválido o expirado",
+    )
+    if (
+        usuario is None
+        or not usuario.reset_code
+        or not usuario.reset_code_expires
+        or not secrets.compare_digest(usuario.reset_code, payload.codigo)
+        or usuario.reset_code_expires < datetime.utcnow()
+    ):
+        raise invalido
+
+    usuario.password_hash = hash_password(payload.nueva_clave)
+    usuario.reset_code = None
+    usuario.reset_code_expires = None
+    db.commit()
+    return {"mensaje": "Contraseña restablecida exitosamente"}

@@ -48,6 +48,8 @@ def _migrar_usuario() -> None:
             "ALTER TABLE documento_identidad ADD CONSTRAINT ck_documento_tipo CHECK "
             "(tipo_documento IN ('cedula','tarjeta_identidad','cedula_extranjeria','pasaporte','licencia'));"
         ))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS reset_code VARCHAR(10);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS reset_code_expires TIMESTAMP;"))
         # Migrar usuarios existentes
         conn.execute(text("UPDATE usuario SET estado_kyc = 'PENDIENTE' WHERE estado_kyc IS NULL;"))
         conn.execute(text("UPDATE usuario SET role = 'cliente' WHERE role IS NULL;"))

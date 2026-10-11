@@ -1,13 +1,15 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
+from sqlalchemy import func, select, text
+from sqlalchemy.orm import Session
 
 from .config import settings
-from .database import Base, engine
+from .database import Base, engine, get_db
+from .models import Usuario
 from .routers import auth, kyc, users
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -93,6 +95,19 @@ app.include_router(auth.router)
 @app.get("/health", tags=["infra"])
 def health():
     return {"status": "ok", "service": settings.service_name}
+
+
+@app.get("/stats", tags=["infra"])
+def stats(db: Session = Depends(get_db)):
+    return {
+        "total_usuarios": db.execute(select(func.count()).select_from(Usuario)).scalar(),
+        "usuarios_aprobados": db.execute(
+            select(func.count()).select_from(Usuario).where(Usuario.estado_kyc == "aprobado")
+        ).scalar(),
+        "usuarios_pendientes": db.execute(
+            select(func.count()).select_from(Usuario).where(Usuario.estado_kyc == "pendiente_verificacion")
+        ).scalar(),
+    }
 
 
 @app.exception_handler(Exception)

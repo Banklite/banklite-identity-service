@@ -224,3 +224,21 @@ class OTPResponse(BaseModel):
     mensaje: str
     codigo_debug: str | None = None
 
+
+# ============================================================================
+# PIN (Nequi-style 4-digit PIN)
+# ============================================================================
+
+class PINSetRequest(BaseModel):
+    id_usuario: uuid.UUID
+    pin: str = Field(min_length=4, max_length=4, pattern=r"^\d{4}$", description="PIN de 4 digitos numericos")
+
+
+class PINLoginRequest(BaseModel):
+    identificador: str = Field(description="Correo, telefono o cedula")
+    pin: str = Field(min_length=4, max_length=4, pattern=r"^\d{4}$")
+
+
+class PINStatusResponse(BaseModel):
+    tiene_pin: bool
+    mensaje: str

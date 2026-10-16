@@ -17,6 +17,9 @@ from ..schemas import (
     OTPGenerarRequest,
     OTPResponse,
     OTPValidarRequest,
+    PINLoginRequest,
+    PINSetRequest,
+    PINStatusResponse,
     ResetClave,
     SolicitarReset,
 )
@@ -301,4 +304,84 @@ def validar_otp(payload: OTPValidarRequest, db: Session = Depends(get_db)):
     usuario.reset_code_expires = None
     db.commit()
     return OTPResponse(valido=True, mensaje="Clave dinámica verificada exitosamente")
+
+
+# ============================================================================
+# PIN DE SEGURIDAD (NEQUI STYLE - 4 DIGITOS)
+# ============================================================================
+
+@router.post("/pin/configurar", response_model=PINStatusResponse)
+def configurar_pin(payload: PINSetRequest, db: Session = Depends(get_db)):
+    """Configura o actualiza el PIN de 4 digitos del usuario."""
+    usuario = db.get(Usuario, payload.id_usuario)
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    usuario.pin_hash = hash_password(payload.pin)
+    db.commit()
+    return PINStatusResponse(tiene_pin=True, mensaje="PIN de 4 dígitos configurado exitosamente")
+
+
+@router.get("/pin/status/{id_usuario}", response_model=PINStatusResponse)
+def status_pin(id_usuario: uuid.UUID, db: Session = Depends(get_db)):
+    """Verifica si el usuario ya tiene configurado su PIN de 4 digitos."""
+    usuario = db.get(Usuario, id_usuario)
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    tiene = bool(usuario.pin_hash)
+    return PINStatusResponse(
+        tiene_pin=tiene,
+        mensaje="PIN configurado" if tiene else "Usuario no tiene PIN configurado",
+    )
+
+
+@router.post("/pin/login", response_model=LoginResponse)
+def login_con_pin(payload: PINLoginRequest, db: Session = Depends(get_db)):
+    """Inicio de sesion directo mediante identificador (celular/correo/cedula) y PIN de 4 digitos estilo Nequi."""
+    usuario = _buscar_usuario_por_identificador(db, payload.identificador)
+    credenciales_invalidas = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Número de celular/identificador o PIN incorrectos",
+    )
+    if usuario is None or usuario.pin_hash is None:
+        raise credenciales_invalidas
+
+    if not verify_password(payload.pin, usuario.pin_hash):
+        raise credenciales_invalidas
+
+    token = create_access_token(usuario.id_usuario, usuario.email, usuario.role)
+    return LoginResponse(access_token=token, usuario=usuario)
+
+
+@router.post("/pin/solicitar-codigo", response_model=LoginIniciarResponse)
+def solicitar_codigo_con_pin(payload: PINLoginRequest, db: Session = Depends(get_db)):
+    """Valida el PIN de 4 digitos y dispara el OTP por WhatsApp y correo para 2FA."""
+    usuario = _buscar_usuario_por_identificador(db, payload.identificador)
+    credenciales_invalidas = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Número de celular/identificador o PIN incorrectos",
+    )
+    if usuario is None or usuario.pin_hash is None:
+        raise credenciales_invalidas
+
+    if not verify_password(payload.pin, usuario.pin_hash):
+        raise credenciales_invalidas
+
+    codigo = f"{secrets.randbelow(1_000_000):06d}"
+    usuario.reset_code = codigo
+    usuario.reset_code_expires = datetime.utcnow() + timedelta(minutes=5)
+    db.commit()
+
+    _notificar_codigo_login(usuario.id_usuario, codigo)
+
+    return LoginIniciarResponse(
+        requiere_2fa=True,
+        id_usuario=usuario.id_usuario,
+        nombre=usuario.nombre,
+        email_enmascarado=_enmascarar_email(usuario.email),
+        telefono_enmascarado=_enmascarar_telefono(usuario.telefono),
+        mensaje="PIN verificado. Código de seguridad enviado a tu WhatsApp y correo.",
+        codigo_debug=codigo,
+    )
 

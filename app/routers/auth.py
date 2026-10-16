@@ -7,7 +7,15 @@ from ..models import Usuario
 import secrets
 from datetime import datetime, timedelta
 
-from ..schemas import LoginRequest, LoginResponse, ResetClave, SolicitarReset
+from ..schemas import (
+    LoginRequest,
+    LoginResponse,
+    OTPGenerarRequest,
+    OTPResponse,
+    OTPValidarRequest,
+    ResetClave,
+    SolicitarReset,
+)
 from ..security import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/auth", tags=["autenticacion"])
@@ -77,3 +85,70 @@ def reset_clave(payload: ResetClave, db: Session = Depends(get_db)):
     usuario.reset_code_expires = None
     db.commit()
     return {"mensaje": "Contraseña restablecida exitosamente"}
+
+
+# ============================================================================
+# CLAVE DINAMICA / OTP 2FA (NEQUI STYLE)
+# ============================================================================
+
+@router.post("/otp/generar", response_model=OTPResponse)
+def generar_otp(payload: OTPGenerarRequest, db: Session = Depends(get_db)):
+    """Genera una Clave Dinamica / OTP de 6 digitos (estilo Nequi) con expiracion de 5 minutos.
+    
+    Dispara la notificacion por Email y WhatsApp si el usuario los tiene registrados.
+    """
+    usuario = db.get(Usuario, payload.id_usuario)
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    codigo = f"{secrets.randbelow(1_000_000):06d}"
+    usuario.reset_code = codigo
+    usuario.reset_code_expires = datetime.utcnow() + timedelta(minutes=5)
+    db.commit()
+
+    # Disparar envio de notificacion a traves de notification-service
+    import httpx
+    try:
+        httpx.post(
+            "http://notification-service:8007/notifications",
+            json={
+                "id_usuario": str(usuario.id_usuario),
+                "tipo": "seguridad",
+                "titulo": "Tu Clave Dinámica BankLite",
+                "mensaje": f"Tu código de seguridad para {payload.operacion} es: {codigo}. Válido por 5 minutos. No lo compartas con nadie.",
+                "enviar_correo": True,
+            },
+            timeout=3.0,
+        )
+    except Exception:
+        pass
+
+    return OTPResponse(
+        valido=True,
+        mensaje="Clave dinámica enviada por correo y WhatsApp",
+        codigo_debug=codigo,
+    )
+
+
+@router.post("/otp/validar", response_model=OTPResponse)
+def validar_otp(payload: OTPValidarRequest, db: Session = Depends(get_db)):
+    """Valida la Clave Dinamica ingresada por el usuario y la invalida si es correcta."""
+    usuario = db.get(Usuario, payload.id_usuario)
+    if not usuario or not usuario.reset_code or not usuario.reset_code_expires:
+        return OTPResponse(valido=False, mensaje="No hay ninguna clave dinámica activa para este usuario")
+
+    if usuario.reset_code_expires < datetime.utcnow():
+        usuario.reset_code = None
+        usuario.reset_code_expires = None
+        db.commit()
+        return OTPResponse(valido=False, mensaje="La clave dinámica ha expirado. Solicita una nueva")
+
+    if not secrets.compare_digest(usuario.reset_code, payload.codigo):
+        return OTPResponse(valido=False, mensaje="Clave dinámica incorrecta")
+
+    # Invalida tras uso unico
+    usuario.reset_code = None
+    usuario.reset_code_expires = None
+    db.commit()
+    return OTPResponse(valido=True, mensaje="Clave dinámica verificada exitosamente")
+

@@ -183,3 +183,21 @@ class UsuarioUpdate(BaseModel):
     fecha_expedicion: str | None = None
     fecha_vencimiento: str | None = None
     pais_expedicion: str | None = None
+
+
+class OTPGenerarRequest(BaseModel):
+    id_usuario: uuid.UUID
+    operacion: str = "general"
+
+
+class OTPValidarRequest(BaseModel):
+    id_usuario: uuid.UUID
+    codigo: str = Field(min_length=6, max_length=6)
+    operacion: str = "general"
+
+
+class OTPResponse(BaseModel):
+    valido: bool
+    mensaje: str
+    codigo_debug: str | None = None
+

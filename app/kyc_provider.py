@@ -42,6 +42,7 @@ VERIFIK_DOC_TYPES = {
 
 def _verify_with_verifik(tipo_documento: str, numero_documento: str) -> tuple[str, str]:
     """Verificacion via Verifik oficial — una sola llamada GET instantanea."""
+    token = os.getenv("VERIFIK_TOKEN") or VERIFIK_TOKEN
     doc_type = VERIFIK_DOC_TYPES.get(tipo_documento.lower(), "CC")
     doc_number = "".join(ch for ch in numero_documento if ch.isdigit())
 
@@ -52,7 +53,7 @@ def _verify_with_verifik(tipo_documento: str, numero_documento: str) -> tuple[st
     )
     req = urllib.request.Request(url, method="GET")
     req.add_header("Accept", "application/json")
-    req.add_header("Authorization", f"Bearer {VERIFIK_TOKEN}")
+    req.add_header("Authorization", f"Bearer {token}")
 
     try:
         with urllib.request.urlopen(req, timeout=12) as response:
@@ -171,7 +172,8 @@ def verify_identity(tipo_documento: str, numero_documento: str) -> tuple[str, st
     2. Si hay TRUORA_API_KEY configurada, usa Truora API oficial.
     3. Si no hay token de pago, ejecuta verificacion real contra datos.gov.co y algoritmos oficiales.
     """
-    if VERIFIK_TOKEN:
+    token_v = os.getenv("VERIFIK_TOKEN") or VERIFIK_TOKEN
+    if token_v:
         try:
             return _verify_with_verifik(tipo_documento, numero_documento)
         except Exception as e:

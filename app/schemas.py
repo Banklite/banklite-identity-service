@@ -153,8 +153,31 @@ class KycVerifyResult(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    identificador: str | None = None
+    email: str | None = None
     password: str = Field(min_length=1, max_length=72)
+    codigo_otp: str | None = None
+
+
+class LoginIniciarRequest(BaseModel):
+    identificador: str = Field(description="Correo electronico o numero de celular")
+    password: str = Field(min_length=1, max_length=72)
+    telefono: str | None = Field(default=None, description="Telefono opcional a registrar si el usuario no tiene")
+
+
+class LoginIniciarResponse(BaseModel):
+    requiere_2fa: bool = True
+    id_usuario: uuid.UUID
+    nombre: str
+    email_enmascarado: str
+    telefono_enmascarado: str
+    mensaje: str
+    codigo_debug: str | None = None
+
+
+class LoginVerificarOTPRequest(BaseModel):
+    id_usuario: uuid.UUID
+    codigo: str = Field(min_length=6, max_length=6)
 
 
 class LoginResponse(BaseModel):

@@ -24,5 +24,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 480
 
+    notification_service_url: str = "http://notification-service:8007"
+
 
 settings = Settings()

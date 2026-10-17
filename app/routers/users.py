@@ -244,6 +244,33 @@ def listar_usuarios(
     return db.execute(stmt).scalars().all()
 
 
+@router.get("/by-telefono/{telefono}")
+def buscar_por_telefono(telefono: str, db: Session = Depends(get_db)):
+    """Busca un usuario por su número de celular para transferencias estilo Nequi/Bre-B."""
+    clean = "".join(ch for ch in telefono if ch.isdigit())
+    if not clean or len(clean) < 7:
+        raise HTTPException(status_code=400, detail="Número de teléfono inválido")
+
+    stmt = select(Usuario).where(
+        (Usuario.telefono == telefono)
+        | (Usuario.telefono == f"+{clean}")
+        | (Usuario.telefono == f"+57{clean}")
+        | (Usuario.telefono.ilike(f"%{clean[-10:]}"))
+    )
+    usuario = db.execute(stmt).scalars().first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado con ese número de celular")
+
+    return {
+        "id_usuario": str(usuario.id_usuario),
+        "nombre": usuario.nombre,
+        "apellido": usuario.apellido,
+        "telefono": usuario.telefono,
+        "email": usuario.email,
+        "estado": usuario.estado,
+    }
+
+
 
 
 from ..schemas import UsuarioUpdate

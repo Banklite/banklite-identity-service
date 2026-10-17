@@ -279,7 +279,30 @@ from ..schemas import UsuarioUpdate
 @router.patch("/{id_usuario}", response_model=UsuarioOut)
 def actualizar_usuario(id_usuario: uuid.UUID, payload: UsuarioUpdate, db: Session = Depends(get_db)):
     usuario = get_usuario_or_404(db, id_usuario)
-    if payload.cedula:
+
+    if payload.nombre is not None and payload.nombre.strip():
+        usuario.nombre = payload.nombre.strip()
+    if payload.apellido is not None:
+        usuario.apellido = payload.apellido.strip() if payload.apellido else None
+    if payload.email is not None and str(payload.email).strip():
+        nuevo_email = str(payload.email).strip().lower()
+        # Verificar que otro usuario no tenga ya este email
+        existente = db.execute(
+            select(Usuario).where(Usuario.email == nuevo_email, Usuario.id_usuario != id_usuario)
+        ).scalars().first()
+        if existente:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"El correo electrónico {nuevo_email} ya se encuentra registrado por otra persona",
+            )
+        usuario.email = nuevo_email
+    if payload.pais_residencia is not None and payload.pais_residencia.strip():
+        usuario.pais_residencia = payload.pais_residencia.strip().upper()
+    if payload.servicio_solicitado is not None:
+        usuario.servicio_solicitado = payload.servicio_solicitado
+
+    # Datos de documento / KYC (solo editable si aún no tenía cédula)
+    if payload.cedula and not usuario.cedula:
         usuario.cedula = payload.cedula
     if payload.fecha_nacimiento:
         usuario.fecha_nacimiento = payload.fecha_nacimiento
@@ -289,7 +312,7 @@ def actualizar_usuario(id_usuario: uuid.UUID, payload: UsuarioUpdate, db: Sessio
         usuario.fecha_vencimiento = payload.fecha_vencimiento
     if payload.pais_expedicion:
         usuario.pais_expedicion = payload.pais_expedicion
-    usuario.estado_kyc = "EN_REVISION"
+
     db.commit()
     db.refresh(usuario)
     return usuario

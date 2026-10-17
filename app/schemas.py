@@ -201,8 +201,13 @@ class ResetClave(BaseModel):
 
 
 class UsuarioUpdate(BaseModel):
-    cedula: str | None = None
+    nombre: str | None = None
+    apellido: str | None = None
+    email: EmailStr | None = None
     fecha_nacimiento: str | None = None
+    pais_residencia: str | None = None
+    servicio_solicitado: str | None = None
+    cedula: str | None = None
     fecha_expedicion: str | None = None
     fecha_vencimiento: str | None = None
     pais_expedicion: str | None = None

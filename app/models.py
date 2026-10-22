@@ -58,6 +58,9 @@ class Usuario(Base):
     reset_code_expires: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # PIN de 4 dígitos (estilo Nequi) — hash bcrypt, nullable hasta que el usuario lo configure
     pin_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Clave dinámica (estilo Nequi): código vigente emitido por el servidor y su expiración.
+    clave_dinamica_codigo: Mapped[str | None] = mapped_column(String(6), nullable=True)
+    clave_dinamica_expira: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     documentos: Mapped[list["DocumentoIdentidad"]] = relationship(
         back_populates="usuario", cascade="all, delete-orphan"

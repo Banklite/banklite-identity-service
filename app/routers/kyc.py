@@ -19,7 +19,7 @@ def verificar_kyc(payload: KycVerifyRequest, db: Session = Depends(get_db)):
     """Flujo completo de KYC contra el modelo oficial:
 
     1) registra (o reutiliza) el documento_identidad del usuario,
-    2) envia el documento al proveedor KYC externo simulado y crea la
+    2) envia el documento al proveedor KYC configurado (Verifik/Truora) y crea la
        verificacion_kyc con su resultado,
     3) calcula la evaluacion_riesgo asociada a esa verificacion,
     4) si el resultado es aprobado, actualiza el estado del usuario y
@@ -57,9 +57,15 @@ def verificar_kyc(payload: KycVerifyRequest, db: Session = Depends(get_db)):
             detail="Ese numero_documento ya esta registrado para otro usuario",
         )
 
-    resultado, proveedor_externo = kyc_provider.verify_identity(
-        payload.tipo_documento, payload.numero_documento
-    )
+    try:
+        resultado, proveedor_externo = kyc_provider.verify_identity(
+            payload.tipo_documento, payload.numero_documento
+        )
+    except kyc_provider.KycProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"El proveedor de verificación no respondió. Intenta de nuevo. ({exc})",
+        )
     verificacion = VerificacionKyc(
         id_usuario=usuario.id_usuario,
         proveedor_externo=proveedor_externo,
@@ -68,7 +74,7 @@ def verificar_kyc(payload: KycVerifyRequest, db: Session = Depends(get_db)):
     db.add(verificacion)
     db.flush()  # asigna id_verificacion antes de crear la evaluacion de riesgo
 
-    nivel_riesgo, score = kyc_provider.evaluate_risk(payload.numero_documento, resultado)
+    nivel_riesgo, score = kyc_provider.evaluate_risk(payload.numero_documento, resultado, proveedor_externo)
     db.add(
         EvaluacionRiesgo(
             id_verificacion=verificacion.id_verificacion,

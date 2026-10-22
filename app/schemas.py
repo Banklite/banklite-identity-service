@@ -204,6 +204,7 @@ class UsuarioUpdate(BaseModel):
     nombre: str | None = None
     apellido: str | None = None
     email: EmailStr | None = None
+    telefono: str | None = None
     fecha_nacimiento: str | None = None
     pais_residencia: str | None = None
     servicio_solicitado: str | None = None

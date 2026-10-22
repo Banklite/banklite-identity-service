@@ -53,6 +53,8 @@ def _migrar_usuario() -> None:
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS reset_code VARCHAR(10);"))
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS reset_code_expires TIMESTAMP;"))
         conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS pin_hash VARCHAR(255);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS clave_dinamica_codigo VARCHAR(6);"))
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS clave_dinamica_expira TIMESTAMP;"))
         # Migrar usuarios existentes
         conn.execute(text("UPDATE usuario SET estado_kyc = 'PENDIENTE' WHERE estado_kyc IS NULL;"))
         conn.execute(text("UPDATE usuario SET role = 'cliente' WHERE role IS NULL;"))

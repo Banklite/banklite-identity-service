@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Usuario
+from ..models import DocumentoIdentidad, Usuario
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta
@@ -23,9 +24,20 @@ from ..schemas import (
     ResetClave,
     SolicitarReset,
 )
-from ..security import create_access_token, hash_password, verify_password
+from ..security import (
+    clave_dinamica_valida,
+    clave_dinamica_vigente_valida,
+    create_access_token,
+    emitir_clave_dinamica,
+    generar_clave_dinamica,
+    get_current_user,
+    hash_password,
+    verify_password,
+)
+from ..pwned import password_comprometida
 
 router = APIRouter(prefix="/auth", tags=["autenticacion"])
+logger = logging.getLogger(__name__)
 
 
 def _buscar_usuario_por_identificador(db: Session, ident: str) -> Usuario | None:
@@ -44,8 +56,22 @@ def _buscar_usuario_por_identificador(db: Session, ident: str) -> Usuario | None
         | (Usuario.telefono == f"+57{digitos}")
         | (Usuario.telefono.ilike(f"%{digitos[-10:]}"))
         | (Usuario.cedula == ident)
+        | (Usuario.cedula == digitos)
     )
-    return db.execute(stmt).scalars().first()
+    # Si varias cuentas comparten identificador (ej. mismo celular), se prefiere
+    # la que tiene PIN configurado porque es la que puede iniciar sesion.
+    usuario = db.execute(stmt.order_by(Usuario.pin_hash.is_(None))).scalars().first()
+    if usuario:
+        return usuario
+    # Respaldo: el documento registrado durante el KYC (documento_identidad)
+    # permite entrar con su numero de cedula aunque el campo cedula del
+    # registro del usuario aun no lo tenga guardado.
+    doc = db.execute(
+        select(DocumentoIdentidad).where(DocumentoIdentidad.numero_documento == digitos)
+    ).scalars().first()
+    if doc is None:
+        return None
+    return db.get(Usuario, doc.id_usuario)
 
 
 def _enmascarar_email(email: str) -> str:
@@ -66,29 +92,50 @@ def _enmascarar_telefono(tel: str | None) -> str:
     return f"***{clean}"
 
 
-def _notificar_codigo_login(id_usuario: uuid.UUID, codigo: str) -> None:
+def _entregar_codigo(id_usuario: uuid.UUID, titulo: str, mensaje: str, whatsapp: bool = True) -> None:
+    """Entrega un codigo de seguridad por correo y/o WhatsApp de forma SINCRONA.
+
+    Si ningun canal logra entregarlo lanza 503: el usuario debe enterarse de que
+    el codigo NO va en camino en vez de quedarse esperando un mensaje que no llega.
+    El timeout es largo porque el notification-service en Render (plan gratis)
+    puede tardar ~50 s en despertar.
+    """
     import json
+    import urllib.error
     import urllib.request
     from ..config import settings
-    try:
-        url = f"{settings.notification_service_url}/notifications"
-        payload = json.dumps({
+
+    req = urllib.request.Request(
+        f"{settings.notification_service_url}/notifications/codigo-seguridad",
+        data=json.dumps({
             "id_usuario": str(id_usuario),
-            "tipo": "seguridad",
-            "titulo": "Tu Código de Acceso BankLite",
-            "mensaje": f"Tu código de confirmación para iniciar sesión en BankLite es: {codigo}. Válido por 5 minutos. No lo compartas con nadie.",
-            "enviar_correo": True,
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            pass
-    except Exception:
-        pass
+            "titulo": titulo,
+            "mensaje": mensaje,
+            "enviar_whatsapp": whatsapp,
+        }).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=75):
+            return
+    except urllib.error.HTTPError as exc:
+        detalle = exc.read().decode("utf-8", errors="replace")[:300]
+        logger.error("notification-service rechazo el envio del codigo (HTTP %s): %s", exc.code, detalle)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("No se pudo contactar notification-service: %s", exc)
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="No pudimos enviarte el código en este momento. Intenta de nuevo en unos segundos.",
+    )
+
+
+def _notificar_codigo_login(id_usuario: uuid.UUID, codigo: str) -> None:
+    _entregar_codigo(
+        id_usuario,
+        "Tu Código de Acceso BankLite",
+        f"Tu código de confirmación para iniciar sesión en BankLite es: {codigo}. Válido por 5 minutos. No lo compartas con nadie.",
+    )
 
 
 @router.post("/login/solicitar-codigo", response_model=LoginIniciarResponse)
@@ -125,8 +172,8 @@ def solicitar_codigo_login(payload: LoginIniciarRequest, db: Session = Depends(g
         nombre=usuario.nombre,
         email_enmascarado=_enmascarar_email(usuario.email),
         telefono_enmascarado=_enmascarar_telefono(usuario.telefono),
-        mensaje="Código de confirmación enviado exitosamente a tu WhatsApp y a tu correo electrónico.",
-        codigo_debug=codigo,
+        mensaje="Código de confirmación enviado a los canales registrados (WhatsApp/correo).",
+        codigo_debug=None,
     )
 
 
@@ -191,14 +238,23 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     return LoginResponse(access_token=token, usuario=usuario)
 
 
+def _notificar_codigo_reset(id_usuario: uuid.UUID, codigo: str) -> None:
+    """Entrega el codigo para restablecer contraseña por correo y por WhatsApp."""
+    _entregar_codigo(
+        id_usuario,
+        "Restablecimiento de Contraseña BankLite",
+        f"Tu código para restablecer tu contraseña en BankLite es: {codigo}. Válido por 15 minutos. Si no solicitaste este cambio, ignora este mensaje.",
+    )
+
+
 @router.post("/solicitar-reset")
 def solicitar_reset(payload: SolicitarReset, db: Session = Depends(get_db)):
-    """Genera un código de 6 dígitos válido por 15 minutos.
+    """Genera un código de 6 dígitos válido por 15 minutos y lo entrega por
+    correo y por WhatsApp a los canales registrados del usuario.
 
-    Modo simulado (sin servicio de correo): el código se devuelve en
-    'codigo_debug'. Siempre responde 200 para no revelar si el correo existe.
+    Siempre responde 200 para no revelar si la cuenta existe.
     """
-    mensaje = "Si el correo está registrado, recibirás un código de verificación."
+    mensaje = "Si el correo está registrado, recibirás un código de verificación por correo y WhatsApp."
     usuario = db.execute(select(Usuario).where(Usuario.email == payload.email.lower())).scalar_one_or_none()
     if usuario is None:
         return {"mensaje": mensaje}
@@ -207,7 +263,9 @@ def solicitar_reset(payload: SolicitarReset, db: Session = Depends(get_db)):
     usuario.reset_code = codigo
     usuario.reset_code_expires = datetime.utcnow() + timedelta(minutes=15)
     db.commit()
-    return {"mensaje": mensaje, "codigo_debug": codigo}
+
+    _notificar_codigo_reset(usuario.id_usuario, codigo)
+    return {"mensaje": mensaje, "codigo_debug": None}
 
 
 @router.post("/reset-clave")
@@ -225,6 +283,16 @@ def reset_clave(payload: ResetClave, db: Session = Depends(get_db)):
         or usuario.reset_code_expires < datetime.utcnow()
     ):
         raise invalido
+
+    veces = password_comprometida(payload.nueva_clave)
+    if veces:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Esa contraseña apareció en {veces:,} filtraciones de datos conocidas "
+                "(Have I Been Pwned). Elige una contraseña distinta."
+            ),
+        )
 
     usuario.password_hash = hash_password(payload.nueva_clave)
     usuario.reset_code = None
@@ -252,34 +320,17 @@ def generar_otp(payload: OTPGenerarRequest, db: Session = Depends(get_db)):
     usuario.reset_code_expires = datetime.utcnow() + timedelta(minutes=5)
     db.commit()
 
-    # Disparar envio de notificacion a traves de notification-service
-    import json
-    import urllib.request
-    from ..config import settings
-    try:
-        url = f"{settings.notification_service_url}/notifications"
-        payload_data = json.dumps({
-            "id_usuario": str(usuario.id_usuario),
-            "tipo": "seguridad",
-            "titulo": "Tu Clave Dinámica BankLite",
-            "mensaje": f"Tu código de seguridad para {payload.operacion} es: {codigo}. Válido por 5 minutos. No lo compartas con nadie.",
-            "enviar_correo": True,
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=payload_data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=4) as resp:
-            pass
-    except Exception:
-        pass
+    _entregar_codigo(
+        usuario.id_usuario,
+        "Tu Clave Dinámica BankLite",
+        f"Tu código de seguridad para {payload.operacion} es: {codigo}. Válido por 5 minutos. No lo compartas con nadie.",
+        whatsapp=False,
+    )
 
     return OTPResponse(
         valido=True,
-        mensaje="Clave dinámica enviada por correo y WhatsApp",
-        codigo_debug=codigo,
+        mensaje="Clave dinámica enviada a los canales registrados",
+        codigo_debug=None,
     )
 
 
@@ -287,8 +338,14 @@ def generar_otp(payload: OTPGenerarRequest, db: Session = Depends(get_db)):
 def validar_otp(payload: OTPValidarRequest, db: Session = Depends(get_db)):
     """Valida la Clave Dinamica ingresada por el usuario y la invalida si es correcta."""
     usuario = db.get(Usuario, payload.id_usuario)
+    # 1) Clave emitida por el servidor (guardada en BD, expira a los 60 s)
+    if usuario and clave_dinamica_vigente_valida(db, usuario.id_usuario, payload.codigo):
+        return OTPResponse(valido=True, mensaje="Clave dinamica verificada exitosamente")
+    # 2) Compatibilidad: codigo derivado de HMAC por ventana (legacy)
+    if usuario and clave_dinamica_valida(usuario.id_usuario, payload.codigo):
+        return OTPResponse(valido=True, mensaje="Clave dinámica verificada exitosamente")
     if not usuario or not usuario.reset_code or not usuario.reset_code_expires:
-        return OTPResponse(valido=False, mensaje="No hay ninguna clave dinámica activa para este usuario")
+        return OTPResponse(valido=False, mensaje="Clave dinamica incorrecta o expirada. Genera una nueva.")
 
     if usuario.reset_code_expires < datetime.utcnow():
         usuario.reset_code = None
@@ -304,6 +361,27 @@ def validar_otp(payload: OTPValidarRequest, db: Session = Depends(get_db)):
     usuario.reset_code_expires = None
     db.commit()
     return OTPResponse(valido=True, mensaje="Clave dinámica verificada exitosamente")
+
+
+@router.get("/clave-dinamica")
+def obtener_clave_dinamica(
+    nueva: bool = Query(False, description="Si es true, emite una clave nueva aunque la actual siga vigente"),
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Clave dinamica REAL del usuario autenticado (estilo token/Nequi).
+
+    El servidor la emite, la guarda en BD con expiracion de 60 s y la valida
+    con POST /auth/otp/validar. Con ?nueva=true se fuerza una clave distinta
+    (boton "Generar nueva"). Si falla la consulta la app muestra el error,
+    nunca inventa un numero.
+    """
+    id_usuario = uuid.UUID(user["sub"])
+    try:
+        codigo, segundos = emitir_clave_dinamica(db, id_usuario, forzar=nueva)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"codigo": codigo, "segundos_restantes": segundos, "ventana_segundos": 60}
 
 
 # ============================================================================
@@ -381,7 +459,7 @@ def solicitar_codigo_con_pin(payload: PINLoginRequest, db: Session = Depends(get
         nombre=usuario.nombre,
         email_enmascarado=_enmascarar_email(usuario.email),
         telefono_enmascarado=_enmascarar_telefono(usuario.telefono),
-        mensaje="PIN verificado. Código de seguridad enviado a tu WhatsApp y correo.",
-        codigo_debug=codigo,
+        mensaje="PIN verificado. Código de seguridad enviado a tus canales registrados.",
+        codigo_debug=None,
     )
 

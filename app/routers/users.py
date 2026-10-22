@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import DocumentoIdentidad, EvaluacionRiesgo, Usuario, VerificacionKyc
 from ..schemas import CambiarClave, UsuarioCreate, UsuarioOut
-from ..security import hash_password, verify_password
+from ..security import get_current_user, hash_password, verify_password
 from .. import kyc_provider
+from ..pwned import password_comprometida
 from ..events import EVENT_IDENTITY_VERIFIED, publish_event
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ def _ejecutar_kyc(
         db.add(verificacion)
         db.flush()
 
-        nivel_riesgo, score = kyc_provider.evaluate_risk(numero_doc, resultado)
+        nivel_riesgo, score = kyc_provider.evaluate_risk(numero_doc, resultado, proveedor_externo)
         db.add(
             EvaluacionRiesgo(
                 id_verificacion=verificacion.id_verificacion,
@@ -165,6 +166,16 @@ def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
                 estado_kyc = "MENOR_CON_REPRESENTANTE"
         except ValueError:
             pass
+
+    veces = password_comprometida(payload.password)
+    if veces:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Esa contraseña apareció en {veces:,} filtraciones de datos conocidas "
+                "(Have I Been Pwned). Elige una contraseña distinta."
+            ),
+        )
 
     usuario = Usuario(
         nombre=payload.nombre,
@@ -277,7 +288,18 @@ from ..schemas import UsuarioUpdate
 
 
 @router.patch("/{id_usuario}", response_model=UsuarioOut)
-def actualizar_usuario(id_usuario: uuid.UUID, payload: UsuarioUpdate, db: Session = Depends(get_db)):
+def actualizar_usuario(
+    id_usuario: uuid.UUID,
+    payload: UsuarioUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    # Solo el propio usuario o un administrador pueden modificar un perfil.
+    if user.get("sub") != str(id_usuario) and user.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No puedes modificar el perfil de otro usuario.",
+        )
     usuario = get_usuario_or_404(db, id_usuario)
 
     if payload.nombre is not None and payload.nombre.strip():
@@ -312,6 +334,8 @@ def actualizar_usuario(id_usuario: uuid.UUID, payload: UsuarioUpdate, db: Sessio
         usuario.fecha_vencimiento = payload.fecha_vencimiento
     if payload.pais_expedicion:
         usuario.pais_expedicion = payload.pais_expedicion
+    if payload.telefono is not None:
+        usuario.telefono = payload.telefono
 
     db.commit()
     db.refresh(usuario)
@@ -326,6 +350,17 @@ def cambiar_clave(id_usuario: uuid.UUID, payload: CambiarClave, db: Session = De
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="La contraseña actual es incorrecta",
         )
+
+    veces = password_comprometida(payload.clave_nueva)
+    if veces:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Esa contraseña apareció en {veces:,} filtraciones de datos conocidas "
+                "(Have I Been Pwned). Elige una contraseña distinta."
+            ),
+        )
+
     usuario.password_hash = hash_password(payload.clave_nueva)
     db.commit()
     return {"mensaje": "Contraseña actualizada exitosamente"}
@@ -384,53 +419,32 @@ def calcular_digito_verificacion_dian(nit_o_cedula: str) -> int:
 
 @router.get("/validar-identidad/{numero_documento}", tags=["identidad_publica"])
 def validar_identidad_colombiana(numero_documento: str):
-    """API de validacion de documento y antecedentes en tiempo real con datos abiertos y algoritmo DIAN.
-    
-    Fuentes oficiales 100% gratuitas:
-    1. Portal de Datos Abiertos de Colombia (datos.gov.co)
-    2. Algoritmo DIAN Art. 555-2 Estatuto Tributario
-    3. Rango de Cedulacion Registraduria Nacional
-    """
-    import urllib.request
-    import json
+    """Validacion de FORMATO de un documento colombiano (digito de verificacion DIAN).
 
+    Esto NO consulta antecedentes ni verifica que la persona exista: no hay una
+    fuente publica gratuita que lo permita (el dataset de datos.gov.co que se usaba
+    dejo de existir y el endpoint respondia "LIMPIO" cuando la consulta fallaba).
+    La verificacion real de identidad la hace el proveedor KYC (Verifik/Truora) al
+    registrar al usuario, y el screening de sanciones lo hace compliance-service
+    (POST /compliance/screenings) por nombre.
+    """
     clean_num = "".join(ch for ch in numero_documento if ch.isdigit())
     if len(clean_num) < 6 or len(clean_num) > 11:
         raise HTTPException(status_code=400, detail="Longitud de documento invalida (debe tener entre 6 y 10 digitos)")
 
-    # 1. Calculo de Digito de Verificacion oficial DIAN
     dv_oficial = calcular_digito_verificacion_dian(clean_num)
-
-    # 2. Consulta en vivo al Portal de Datos Abiertos del Gobierno (datos.gov.co)
-    sanciones_encontradas = False
-    url_gov = f"https://www.datos.gov.co/resource/v5w8-pvnf.json?$limit=1&$q={clean_num}"
-    try:
-        req = urllib.request.Request(url_gov, headers={"User-Agent": "BankLite-KYC/2.0"})
-        with urllib.request.urlopen(req, timeout=4) as response:
-            records = json.loads(response.read().decode("utf-8"))
-            if records and isinstance(records, list) and len(records) > 0:
-                sanciones_encontradas = True
-    except Exception:
-        pass
-
-    estado = "RECHAZADO" if sanciones_encontradas else "VALIDO"
-    
     return {
         "documento": clean_num,
         "pais": "CO",
         "digito_verificacion_dian": dv_oficial,
         "formato_rut": f"{clean_num}-{dv_oficial}",
-        "resultado_validacion": estado,
-        "antecedentes_sancionatorios": "POSITIVO" if sanciones_encontradas else "LIMPIO / SIN ANTECEDENTES",
+        "resultado_validacion": "FORMATO_VALIDO",
+        "antecedentes_sancionatorios": "NO_VERIFICADO",
+        "nota": "Solo valida el formato. La identidad se verifica con el proveedor KYC al registrarse.",
         "fuentes_consultadas": [
             {
-                "nombre": "Portal de Datos Abiertos de Colombia",
-                "tipo": "API REST JSON Gratuita del Estado Colombiano",
-                "url": "https://www.datos.gov.co",
-            },
-            {
                 "nombre": "DIAN (Direccion de Impuestos y Aduanas Nacionales)",
-                "tipo": "Algoritmo Matematico Oficial Modulo 11",
+                "tipo": "Algoritmo matematico oficial modulo 11 (solo digito de verificacion)",
                 "url": "https://www.dian.gov.co",
             },
         ],

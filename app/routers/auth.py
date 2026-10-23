@@ -92,8 +92,8 @@ def _enmascarar_telefono(tel: str | None) -> str:
     return f"***{clean}"
 
 
-def _entregar_codigo(id_usuario: uuid.UUID, titulo: str, mensaje: str, whatsapp: bool = True) -> None:
-    """Entrega un codigo de seguridad por correo y/o WhatsApp de forma SINCRONA.
+def _entregar_codigo(id_usuario: uuid.UUID, titulo: str, mensaje: str, whatsapp: bool = False) -> None:
+    """Entrega un codigo de seguridad por correo de forma SINCRONA.
 
     Si ningun canal logra entregarlo lanza 503: el usuario debe enterarse de que
     el codigo NO va en camino en vez de quedarse esperando un mensaje que no llega.
@@ -140,7 +140,7 @@ def _notificar_codigo_login(id_usuario: uuid.UUID, codigo: str) -> None:
 
 @router.post("/login/solicitar-codigo", response_model=LoginIniciarResponse)
 def solicitar_codigo_login(payload: LoginIniciarRequest, db: Session = Depends(get_db)):
-    """Paso 1 del Login 2FA: Valida credenciales, genera OTP y lo envia a WhatsApp y Correo."""
+    """Paso 1 del Login 2FA: Valida credenciales, genera OTP y lo envia por correo."""
     usuario = _buscar_usuario_por_identificador(db, payload.identificador)
     credenciales_invalidas = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -163,7 +163,7 @@ def solicitar_codigo_login(payload: LoginIniciarRequest, db: Session = Depends(g
     usuario.reset_code_expires = datetime.utcnow() + timedelta(minutes=5)
     db.commit()
 
-    # Envia a WhatsApp (Green API) y Correo (Gmail SMTP)
+    # Envia por correo electronico
     _notificar_codigo_login(usuario.id_usuario, codigo)
 
     return LoginIniciarResponse(
@@ -172,14 +172,14 @@ def solicitar_codigo_login(payload: LoginIniciarRequest, db: Session = Depends(g
         nombre=usuario.nombre,
         email_enmascarado=_enmascarar_email(usuario.email),
         telefono_enmascarado=_enmascarar_telefono(usuario.telefono),
-        mensaje="Código de confirmación enviado a los canales registrados (WhatsApp/correo).",
+        mensaje="Código de confirmación enviado a tu correo electrónico.",
         codigo_debug=None,
     )
 
 
 @router.post("/login/confirmar-codigo", response_model=LoginResponse)
 def confirmar_codigo_login(payload: LoginVerificarOTPRequest, db: Session = Depends(get_db)):
-    """Paso 2 del Login 2FA: Valida el codigo recibido por WhatsApp/Correo y emite el JWT."""
+    """Paso 2 del Login 2FA: Valida el codigo recibido por correo y emite el JWT."""
     usuario = db.get(Usuario, payload.id_usuario)
     invalido = HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -239,7 +239,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
 
 def _notificar_codigo_reset(id_usuario: uuid.UUID, codigo: str) -> None:
-    """Entrega el codigo para restablecer contraseña por correo y por WhatsApp."""
+    """Entrega el codigo para restablecer contraseña por correo."""
     _entregar_codigo(
         id_usuario,
         "Restablecimiento de Contraseña BankLite",
@@ -250,11 +250,11 @@ def _notificar_codigo_reset(id_usuario: uuid.UUID, codigo: str) -> None:
 @router.post("/solicitar-reset")
 def solicitar_reset(payload: SolicitarReset, db: Session = Depends(get_db)):
     """Genera un código de 6 dígitos válido por 15 minutos y lo entrega por
-    correo y por WhatsApp a los canales registrados del usuario.
+    correo electrónico al usuario.
 
     Siempre responde 200 para no revelar si la cuenta existe.
     """
-    mensaje = "Si el correo está registrado, recibirás un código de verificación por correo y WhatsApp."
+    mensaje = "Si el correo está registrado, recibirás un código de verificación por correo electrónico."
     usuario = db.execute(select(Usuario).where(Usuario.email == payload.email.lower())).scalar_one_or_none()
     if usuario is None:
         return {"mensaje": mensaje}
@@ -308,8 +308,8 @@ def reset_clave(payload: ResetClave, db: Session = Depends(get_db)):
 @router.post("/otp/generar", response_model=OTPResponse)
 def generar_otp(payload: OTPGenerarRequest, db: Session = Depends(get_db)):
     """Genera una Clave Dinamica / OTP de 6 digitos (estilo Nequi) con expiracion de 5 minutos.
-    
-    Dispara la notificacion por Email y WhatsApp si el usuario los tiene registrados.
+
+    Dispara la notificacion por correo electronico.
     """
     usuario = db.get(Usuario, payload.id_usuario)
     if not usuario:
@@ -434,7 +434,7 @@ def login_con_pin(payload: PINLoginRequest, db: Session = Depends(get_db)):
 
 @router.post("/pin/solicitar-codigo", response_model=LoginIniciarResponse)
 def solicitar_codigo_con_pin(payload: PINLoginRequest, db: Session = Depends(get_db)):
-    """Valida el PIN de 4 digitos y dispara el OTP por WhatsApp y correo para 2FA."""
+    """Valida el PIN de 4 digitos y dispara el OTP por correo para 2FA."""
     usuario = _buscar_usuario_por_identificador(db, payload.identificador)
     credenciales_invalidas = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

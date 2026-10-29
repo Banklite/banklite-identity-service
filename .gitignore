@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Entorno y secretos: nunca subir credenciales ni llaves de API
+.env
+*.env
+!.env.example
+
+# Bases de datos locales
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store

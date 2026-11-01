@@ -1,0 +1,19 @@
+name: CI-CD identity-service
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  pipeline:
+    uses: Banklite/banklite-pipelines/.github/workflows/service-pipeline.yml@main
+    with:
+      service-name: banklite-identity-service
+    secrets: inherit

@@ -2,7 +2,7 @@ import uuid
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -255,23 +255,7 @@ def listar_usuarios(
     return db.execute(stmt).scalars().all()
 
 
-@router.get("/by-telefono/{telefono}")
-def buscar_por_telefono(telefono: str, db: Session = Depends(get_db)):
-    """Busca un usuario por su número de celular para transferencias estilo Nequi/Bre-B."""
-    clean = "".join(ch for ch in telefono if ch.isdigit())
-    if not clean or len(clean) < 7:
-        raise HTTPException(status_code=400, detail="Número de teléfono inválido")
-
-    stmt = select(Usuario).where(
-        (Usuario.telefono == telefono)
-        | (Usuario.telefono == f"+{clean}")
-        | (Usuario.telefono == f"+57{clean}")
-        | (Usuario.telefono.ilike(f"%{clean[-10:]}"))
-    )
-    usuario = db.execute(stmt).scalars().first()
-    if not usuario:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado con ese número de celular")
-
+def _usuario_publico(usuario: Usuario) -> dict:
     return {
         "id_usuario": str(usuario.id_usuario),
         "nombre": usuario.nombre,
@@ -280,6 +264,61 @@ def buscar_por_telefono(telefono: str, db: Session = Depends(get_db)):
         "email": usuario.email,
         "estado": usuario.estado,
     }
+
+
+def _usuario_por_telefono(db: Session, telefono: str) -> Usuario | None:
+    clean = "".join(ch for ch in telefono if ch.isdigit())
+    stmt = select(Usuario).where(
+        (Usuario.telefono == telefono)
+        | (Usuario.telefono == f"+{clean}")
+        | (Usuario.telefono == f"+57{clean}")
+        | (Usuario.telefono.ilike(f"%{clean[-10:]}"))
+    )
+    return db.execute(stmt).scalars().first()
+
+
+@router.get("/by-telefono/{telefono}")
+def buscar_por_telefono(telefono: str, db: Session = Depends(get_db)):
+    """Busca un usuario por su número de celular para transferencias estilo Nequi/Bre-B."""
+    clean = "".join(ch for ch in telefono if ch.isdigit())
+    if not clean or len(clean) < 7:
+        raise HTTPException(status_code=400, detail="Número de teléfono inválido")
+
+    usuario = _usuario_por_telefono(db, telefono)
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado con ese número de celular")
+    return _usuario_publico(usuario)
+
+
+@router.get("/by-llave/{valor}")
+def buscar_por_llave(valor: str, db: Session = Depends(get_db)):
+    """Busca un usuario por su llave Bre-B: correo electrónico, número de documento o celular.
+
+    Son las tres llaves que el panel le ofrece a cada cliente para recibir pagos."""
+    v = valor.strip()
+    if len(v) < 5:
+        raise HTTPException(status_code=400, detail="Llave inválida")
+
+    usuario = None
+    if "@" in v:
+        usuario = db.execute(select(Usuario).where(func.lower(Usuario.email) == v.lower())).scalars().first()
+    else:
+        digitos = "".join(ch for ch in v if ch.isdigit())
+        if len(digitos) < 5:
+            raise HTTPException(status_code=400, detail="Llave inválida")
+        # 1) cédula / documento; 2) celular
+        usuario = db.execute(select(Usuario).where(Usuario.cedula == digitos)).scalars().first()
+        if usuario is None:
+            doc = db.execute(
+                select(DocumentoIdentidad).where(DocumentoIdentidad.numero_documento == digitos)
+            ).scalars().first()
+            usuario = doc.usuario if doc else None
+        if usuario is None and len(digitos) >= 7:
+            usuario = _usuario_por_telefono(db, digitos)
+
+    if usuario is None:
+        raise HTTPException(status_code=404, detail="No hay ningún usuario con esa llave Bre-B")
+    return _usuario_publico(usuario)
 
 
 

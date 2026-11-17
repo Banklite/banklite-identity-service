@@ -1,0 +1,21 @@
+# Stack de monitoreo: Prometheus + Grafana.
+#   docker compose up -d      (desde esta carpeta)
+#   Prometheus: http://localhost:9090   (Status > Targets debe mostrar el servicio en UP)
+#   Grafana:    http://localhost:3000   (usuario admin, clave admin; el dashboard ya viene cargado)
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alertas.yml:/etc/prometheus/alertas.yml:ro
+    ports: ["9090:9090"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # para poder vigilar un servicio que corre en tu maquina
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on: [prometheus]

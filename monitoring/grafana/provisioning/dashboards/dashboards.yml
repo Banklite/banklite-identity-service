@@ -1,0 +1,8 @@
+# Carga los dashboards versionados en Git (carpeta grafana/dashboards).
+apiVersion: 1
+providers:
+  - name: BankLite
+    folder: BankLite
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

@@ -1,0 +1,94 @@
+# Integracion continua de banklite-identity-service.
+#
+# Se ejecuta en cada push y en cada pull request. En main no se dispara solo:
+# deploy.yml lo llama como primer paso, de modo que nunca se despliega sin pruebas.
+#
+#   pruebas -> instala dependencias, compila, corre las pruebas unitarias y de
+#              integracion, mide la cobertura y publica el reporte como artefacto
+#   imagen  -> comprueba que la imagen Docker construye (no la publica)
+name: CI
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pruebas:
+    name: Pruebas y cobertura
+    runs-on: ubuntu-latest
+    # Valores solo para CI: las pruebas usan SQLite en memoria y mocks, no servicios reales.
+    env:
+      DATABASE_URL: postgresql+psycopg2://u:p@localhost:5432/db
+      JWT_SECRET: secreto-solo-para-ci
+    steps:
+      - name: Descarga el codigo
+        uses: actions/checkout@v4
+
+      - name: Instala Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instala las dependencias de la aplicacion y de pruebas
+        run: pip install -r requirements-dev.txt
+
+      - name: Compila el codigo
+        run: python -m compileall -q app
+
+      - name: Pruebas unitarias y de integracion con cobertura
+        # Si una prueba falla o la cobertura baja del 70 %, el job falla
+        # y no se construye la imagen ni se despliega.
+        run: >
+          python -m pytest tests -v
+          --cov=app --cov-report=term-missing --cov-report=xml --cov-report=html
+          --cov-fail-under=70
+          --junitxml=test-results.xml
+
+      - name: Resumen de cobertura en la pagina de la ejecucion
+        if: always()
+        run: |
+          {
+            echo "## Cobertura de banklite-identity-service"
+            echo '```'
+            python -m coverage report || echo "No se genero el reporte de cobertura"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publica el reporte de cobertura como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-banklite-identity-service
+          path: |
+            htmlcov/
+            coverage.xml
+            test-results.xml
+          if-no-files-found: warn
+
+      - name: La aplicacion importa correctamente
+        run: python -c "import app.main"
+
+  imagen:
+    name: La imagen Docker construye
+    needs: pruebas
+    # En main la imagen la construye y publica deploy.yml; aqui solo se valida.
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descarga el codigo
+        uses: actions/checkout@v4
+
+      - name: Construye la imagen sin publicarla
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: banklite-identity-service:ci

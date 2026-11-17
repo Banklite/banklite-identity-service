@@ -1,0 +1,31 @@
+# Reglas de alerta: Prometheus las evalua cada 15 segundos (pestana Alerts en localhost:9090).
+groups:
+  - name: banklite
+    rules:
+      - alert: ServicioCaido
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} no responde"
+          description: "Prometheus lleva 2 minutos sin poder leer /metrics de {{ $labels.job }}."
+
+      - alert: TasaDeErroresAlta
+        expr: >
+          sum by (job) (rate(http_requests_total{status=~"5.."}[5m]))
+          / sum by (job) (rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }} responde con mas del 5 % de errores 5xx"
+
+      - alert: LatenciaAlta
+        expr: >
+          histogram_quantile(0.95, sum by (job, le) (rate(http_request_duration_seconds_bucket[5m]))) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "El 95 % de las peticiones de {{ $labels.job }} tarda mas de 1 segundo"

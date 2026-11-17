@@ -1,9 +1,15 @@
-name: CI-CD identity-service
+# Despliegue continuo de banklite-identity-service.
+#
+# Se ejecuta al integrar cambios en main (o a mano desde la pestana Actions).
+# Los jobs van en cadena con `needs`: si las pruebas fallan, no hay imagen ni despliegue.
+#
+#   pruebas    -> reutiliza ci.yml (pruebas + cobertura)
+#   imagen     -> construye la imagen y la publica en GitHub Container Registry
+#   despliegue -> pide a Render que despliegue, usando el Deploy Hook guardado en GitHub Secrets
+name: Deploy
 
 on:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -12,8 +18,52 @@ permissions:
   packages: write
 
 jobs:
-  pipeline:
-    uses: Banklite/banklite-pipelines/.github/workflows/service-pipeline.yml@main
-    with:
-      service-name: banklite-identity-service
-    secrets: inherit
+  pruebas:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  imagen:
+    name: Publica la imagen Docker
+    needs: pruebas
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descarga el codigo
+        uses: actions/checkout@v4
+
+      - name: Nombre de la imagen en minusculas (lo exige el registro)
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/banklite-identity-service" >> "$GITHUB_ENV"
+
+      - name: Inicia sesion en GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Construye y publica la imagen
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+
+  despliegue:
+    name: Despliegue en Render
+    needs: imagen
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispara el despliegue en Render
+        env:
+          # El Deploy Hook es una credencial: vive en Settings > Secrets and variables > Actions.
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::error::Falta el secret RENDER_DEPLOY_HOOK_URL: no se puede desplegar."
+            exit 1
+          fi
+          curl --fail --silent --show-error "$HOOK" > /dev/null
+          echo "Despliegue solicitado a Render para banklite-identity-service (${GITHUB_SHA::7})"

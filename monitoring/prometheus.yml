@@ -1,0 +1,21 @@
+# Configuracion de Prometheus para banklite-identity-service.
+# Modelo pull: cada 15 segundos Prometheus consulta GET /metrics del servicio desplegado en Render.
+global:
+  scrape_interval: 15s      # cada cuanto se consultan las metricas
+  evaluation_interval: 15s  # cada cuanto se evaluan las reglas de alerta
+
+rule_files:
+  - alertas.yml
+
+scrape_configs:
+  - job_name: banklite-identity-service
+    scheme: https
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['banklite-identity-service-kc5q.onrender.com']
+
+  # Para vigilar el servicio corriendo en tu maquina (uvicorn en el puerto 8001),
+  # reemplaza el bloque anterior por este:
+  # - job_name: banklite-identity-service
+  #   static_configs:
+  #     - targets: ['host.docker.internal:8001']

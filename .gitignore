@@ -20,3 +20,9 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Pruebas y cobertura
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/

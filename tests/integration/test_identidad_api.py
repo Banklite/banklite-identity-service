@@ -101,8 +101,16 @@ def test_documento_ya_usado_por_otra_persona_se_rechaza(client, admin, externos)
 
 def test_correo_repetido_responde_409(client, admin):
     assert _registrar(client).status_code == 201
-    r = _registrar(client, cedula="1065000222")
+    # Telefono distinto para aislar la regla de correo unico (el telefono
+    # repetido tiene su propio 409, probado aparte).
+    r = _registrar(client, cedula="1065000222", telefono="+573001112233")
     assert r.status_code == 409 and "ya esta registrado" in r.json()["detail"]
+
+
+def test_telefono_repetido_responde_409(client, admin):
+    assert _registrar(client).status_code == 201
+    r = _registrar(client, email="otro@example.com", cedula="1065000222")
+    assert r.status_code == 409 and "celular" in r.json()["detail"]
 
 
 def test_contrasena_filtrada_impide_el_registro(client, sesiones, admin, externos):

@@ -6,6 +6,7 @@ import pytest
 
 from app import kyc_provider
 from app.models import Usuario, VerificacionKyc
+from app.security import hash_password
 
 CLAVE = "Monteria2026*"
 
@@ -59,30 +60,33 @@ def test_configurar_el_pin_y_entrar_con_el(client, sesiones, cliente):
     assert no_entra.status_code == 401
 
 
-def test_pin_login_con_telefono_repetido_entra_en_la_cuenta_correcta(client, cliente):
+def test_pin_login_con_telefono_repetido_entra_en_la_cuenta_correcta(client, sesiones, cliente):
     """Regresion: dos cuentas con el MISMO telefono, cada una con su PIN.
 
-    El telefono no es unico, asi que un numero puede quedar asociado a varias
-    cuentas. El login por telefono + PIN debe entrar en la cuenta cuyo PIN
-    coincide, no siempre en la primera. Antes del fix, la segunda cuenta recibia
-    401 ('PIN incorrecto') aunque su PIN fuera correcto.
+    Aunque hoy el registro impide crear telefonos repetidos, pueden existir
+    cuentas duplicadas de antes de ese candado. El login por telefono + PIN debe
+    entrar en la cuenta cuyo PIN coincide, no siempre en la primera. Antes del
+    fix, la segunda cuenta recibia 401 aunque su PIN fuera correcto. La segunda
+    cuenta se inserta directo en la base para simular ese dato legado.
     """
     tel = "+573001234567"  # mismo telefono del cliente de la fixture
     id_a = cliente["id_usuario"]
     client.post("/auth/pin/configurar", json={"id_usuario": id_a, "pin": "1111"})
 
-    id_b = client.post(
-        "/users",
-        json={"nombre": "Otro", "email": "otro@example.com", "telefono": tel,
-              "pais_residencia": "CO", "password": CLAVE},
-    ).json()["id_usuario"]
-    client.post("/auth/pin/configurar", json={"id_usuario": id_b, "pin": "2222"})
+    id_b = uuid.uuid4()
+    with sesiones() as db:
+        db.add(Usuario(
+            id_usuario=id_b, nombre="Otro", email="otro@example.com", telefono=tel,
+            pais_residencia="CO", password_hash=hash_password(CLAVE),
+            pin_hash=hash_password("2222"), estado="verificado", role="cliente",
+        ))
+        db.commit()
 
     entra_a = client.post("/auth/pin/login", json={"identificador": "3001234567", "pin": "1111"})
     entra_b = client.post("/auth/pin/login", json={"identificador": "3001234567", "pin": "2222"})
 
     assert entra_a.status_code == 200 and entra_a.json()["usuario"]["id_usuario"] == id_a
-    assert entra_b.status_code == 200 and entra_b.json()["usuario"]["id_usuario"] == id_b
+    assert entra_b.status_code == 200 and entra_b.json()["usuario"]["id_usuario"] == str(id_b)
 
 
 def test_pin_con_segundo_factor_envia_el_codigo(client, cliente, externos):

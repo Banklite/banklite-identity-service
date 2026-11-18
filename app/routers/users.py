@@ -177,6 +177,19 @@ def crear_usuario(payload: UsuarioCreate, db: Session = Depends(get_db)):
             ),
         )
 
+    # El telefono es el identificador de ingreso (estilo Nequi), por lo que no
+    # debe repetirse entre cuentas: evita duplicados que confundirian el login
+    # por celular. (La cedula duplicada se maneja aparte en la verificacion KYC,
+    # marcando la cuenta como 'rechazado' por posible suplantacion.)
+    if payload.telefono and payload.telefono.strip():
+        if db.execute(
+            select(Usuario).where(Usuario.telefono == payload.telefono.strip())
+        ).scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ese número de celular ya está registrado en otra cuenta.",
+            )
+
     usuario = Usuario(
         nombre=payload.nombre,
         apellido=payload.apellido,

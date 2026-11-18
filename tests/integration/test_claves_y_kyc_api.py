@@ -59,6 +59,32 @@ def test_configurar_el_pin_y_entrar_con_el(client, sesiones, cliente):
     assert no_entra.status_code == 401
 
 
+def test_pin_login_con_telefono_repetido_entra_en_la_cuenta_correcta(client, cliente):
+    """Regresion: dos cuentas con el MISMO telefono, cada una con su PIN.
+
+    El telefono no es unico, asi que un numero puede quedar asociado a varias
+    cuentas. El login por telefono + PIN debe entrar en la cuenta cuyo PIN
+    coincide, no siempre en la primera. Antes del fix, la segunda cuenta recibia
+    401 ('PIN incorrecto') aunque su PIN fuera correcto.
+    """
+    tel = "+573001234567"  # mismo telefono del cliente de la fixture
+    id_a = cliente["id_usuario"]
+    client.post("/auth/pin/configurar", json={"id_usuario": id_a, "pin": "1111"})
+
+    id_b = client.post(
+        "/users",
+        json={"nombre": "Otro", "email": "otro@example.com", "telefono": tel,
+              "pais_residencia": "CO", "password": CLAVE},
+    ).json()["id_usuario"]
+    client.post("/auth/pin/configurar", json={"id_usuario": id_b, "pin": "2222"})
+
+    entra_a = client.post("/auth/pin/login", json={"identificador": "3001234567", "pin": "1111"})
+    entra_b = client.post("/auth/pin/login", json={"identificador": "3001234567", "pin": "2222"})
+
+    assert entra_a.status_code == 200 and entra_a.json()["usuario"]["id_usuario"] == id_a
+    assert entra_b.status_code == 200 and entra_b.json()["usuario"]["id_usuario"] == id_b
+
+
 def test_pin_con_segundo_factor_envia_el_codigo(client, cliente, externos):
     client.post("/auth/pin/configurar", json={"id_usuario": cliente["id_usuario"], "pin": "4821"})
 

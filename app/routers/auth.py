@@ -40,14 +40,23 @@ router = APIRouter(prefix="/auth", tags=["autenticacion"])
 logger = logging.getLogger(__name__)
 
 
-def _buscar_usuario_por_identificador(db: Session, ident: str) -> Usuario | None:
+def _buscar_usuarios_por_identificador(db: Session, ident: str) -> list[Usuario]:
+    """Devuelve TODAS las cuentas que coinciden con el identificador.
+
+    El telefono y la cedula NO son unicos en la base, asi que un mismo numero
+    puede estar asociado a varias cuentas. Para autenticar hay que revisar
+    todas las coincidencias y quedarse con aquella cuya credencial (PIN o
+    contrasena) realmente coincide — ver `_autenticar_por_credencial`.
+    """
     ident = ident.strip()
     if "@" in ident:
-        return db.execute(select(Usuario).where(Usuario.email == ident.lower())).scalar_one_or_none()
+        u = db.execute(select(Usuario).where(Usuario.email == ident.lower())).scalar_one_or_none()
+        return [u] if u else []
 
     digitos = "".join(ch for ch in ident if ch.isdigit())
     if not digitos:
-        return db.execute(select(Usuario).where(Usuario.email == ident.lower())).scalar_one_or_none()
+        u = db.execute(select(Usuario).where(Usuario.email == ident.lower())).scalar_one_or_none()
+        return [u] if u else []
 
     stmt = select(Usuario).where(
         (Usuario.email == ident.lower())
@@ -58,11 +67,10 @@ def _buscar_usuario_por_identificador(db: Session, ident: str) -> Usuario | None
         | (Usuario.cedula == ident)
         | (Usuario.cedula == digitos)
     )
-    # Si varias cuentas comparten identificador (ej. mismo celular), se prefiere
-    # la que tiene PIN configurado porque es la que puede iniciar sesion.
-    usuario = db.execute(stmt.order_by(Usuario.pin_hash.is_(None))).scalars().first()
-    if usuario:
-        return usuario
+    # Orden estable: primero las cuentas con PIN configurado.
+    usuarios = list(db.execute(stmt.order_by(Usuario.pin_hash.is_(None))).scalars().all())
+    if usuarios:
+        return usuarios
     # Respaldo: el documento registrado durante el KYC (documento_identidad)
     # permite entrar con su numero de cedula aunque el campo cedula del
     # registro del usuario aun no lo tenga guardado.
@@ -70,8 +78,32 @@ def _buscar_usuario_por_identificador(db: Session, ident: str) -> Usuario | None
         select(DocumentoIdentidad).where(DocumentoIdentidad.numero_documento == digitos)
     ).scalars().first()
     if doc is None:
-        return None
-    return db.get(Usuario, doc.id_usuario)
+        return []
+    u = db.get(Usuario, doc.id_usuario)
+    return [u] if u else []
+
+
+def _buscar_usuario_por_identificador(db: Session, ident: str) -> Usuario | None:
+    """Primera cuenta que coincide con el identificador (compatibilidad)."""
+    usuarios = _buscar_usuarios_por_identificador(db, ident)
+    return usuarios[0] if usuarios else None
+
+
+def _autenticar_por_credencial(
+    db: Session, ident: str, credencial: str, campo: str
+) -> Usuario | None:
+    """Autentica contra TODAS las cuentas que comparten el identificador.
+
+    Como el telefono y la cedula pueden repetirse entre cuentas, se prueba la
+    credencial (campo `pin_hash` o `password_hash`) contra cada coincidencia y
+    se devuelve aquella en la que realmente verifica. Asi, un numero repetido
+    ya no deja por fuera a la persona cuyo PIN/clave es el correcto.
+    """
+    for usuario in _buscar_usuarios_por_identificador(db, ident):
+        hashed = getattr(usuario, campo, None)
+        if hashed and verify_password(credencial, hashed):
+            return usuario
+    return None
 
 
 def _enmascarar_email(email: str) -> str:
@@ -141,14 +173,12 @@ def _notificar_codigo_login(id_usuario: uuid.UUID, codigo: str) -> None:
 @router.post("/login/solicitar-codigo", response_model=LoginIniciarResponse)
 def solicitar_codigo_login(payload: LoginIniciarRequest, db: Session = Depends(get_db)):
     """Paso 1 del Login 2FA: Valida credenciales, genera OTP y lo envia por correo."""
-    usuario = _buscar_usuario_por_identificador(db, payload.identificador)
     credenciales_invalidas = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Correo/teléfono o contraseña incorrectos",
     )
-    if usuario is None or usuario.password_hash is None:
-        raise credenciales_invalidas
-    if not verify_password(payload.password, usuario.password_hash):
+    usuario = _autenticar_por_credencial(db, payload.identificador, payload.password, "password_hash")
+    if usuario is None:
         raise credenciales_invalidas
 
     # Si el usuario registro o actualizo su telefono durante el login
@@ -209,16 +239,13 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if not ident:
         raise HTTPException(status_code=400, detail="Debe proporcionar email o identificador")
 
-    usuario = _buscar_usuario_por_identificador(db, ident)
-
     credenciales_invalidas = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Credenciales incorrectas",
     )
 
-    if usuario is None or usuario.password_hash is None:
-        raise credenciales_invalidas
-    if not verify_password(payload.password, usuario.password_hash):
+    usuario = _autenticar_por_credencial(db, ident, payload.password, "password_hash")
+    if usuario is None:
         raise credenciales_invalidas
 
     # Si se envio codigo OTP, validarlo
@@ -417,15 +444,12 @@ def status_pin(id_usuario: uuid.UUID, db: Session = Depends(get_db)):
 @router.post("/pin/login", response_model=LoginResponse)
 def login_con_pin(payload: PINLoginRequest, db: Session = Depends(get_db)):
     """Inicio de sesion directo mediante identificador (celular/correo/cedula) y PIN de 4 digitos estilo Nequi."""
-    usuario = _buscar_usuario_por_identificador(db, payload.identificador)
     credenciales_invalidas = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Número de celular/identificador o PIN incorrectos",
     )
-    if usuario is None or usuario.pin_hash is None:
-        raise credenciales_invalidas
-
-    if not verify_password(payload.pin, usuario.pin_hash):
+    usuario = _autenticar_por_credencial(db, payload.identificador, payload.pin, "pin_hash")
+    if usuario is None:
         raise credenciales_invalidas
 
     token = create_access_token(usuario.id_usuario, usuario.email, usuario.role)
@@ -435,15 +459,12 @@ def login_con_pin(payload: PINLoginRequest, db: Session = Depends(get_db)):
 @router.post("/pin/solicitar-codigo", response_model=LoginIniciarResponse)
 def solicitar_codigo_con_pin(payload: PINLoginRequest, db: Session = Depends(get_db)):
     """Valida el PIN de 4 digitos y dispara el OTP por correo para 2FA."""
-    usuario = _buscar_usuario_por_identificador(db, payload.identificador)
     credenciales_invalidas = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Número de celular/identificador o PIN incorrectos",
     )
-    if usuario is None or usuario.pin_hash is None:
-        raise credenciales_invalidas
-
-    if not verify_password(payload.pin, usuario.pin_hash):
+    usuario = _autenticar_por_credencial(db, payload.identificador, payload.pin, "pin_hash")
+    if usuario is None:
         raise credenciales_invalidas
 
     codigo = f"{secrets.randbelow(1_000_000):06d}"
